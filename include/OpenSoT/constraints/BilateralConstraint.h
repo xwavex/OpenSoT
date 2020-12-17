@@ -20,7 +20,7 @@
 
 #include <OpenSoT/Constraint.h>
 
-#include <yarp/sig/all.h>
+#include <Eigen/Dense>
 #include <list>
 
 
@@ -31,7 +31,8 @@
          * @brief The BilateralConstraint class implements a constraint of the form
          *        bLowerBound <= Aineq*x <= bUpperbound
          */
-        class BilateralConstraint: public Constraint<yarp::sig::Matrix, yarp::sig::Vector> {
+        class BilateralConstraint: public Constraint<Eigen::MatrixXd, Eigen::VectorXd> {
+            static int _constr_count;
         public:
             typedef boost::shared_ptr<BilateralConstraint> Ptr;
 
@@ -43,9 +44,24 @@
              * @param bUpperBound upper bound vector. Number of rows must be the same
              *                    size as the number of rows of Aineq
              */
-            BilateralConstraint(const yarp::sig::Matrix &Aineq,
-                                const yarp::sig::Vector &bLowerBound,
-                                const yarp::sig::Vector &bUpperBound);
+            BilateralConstraint(const Eigen::MatrixXd &Aineq,
+                                const Eigen::VectorXd &bLowerBound,
+                                const Eigen::VectorXd &bUpperBound);
+
+            /**
+             * @brief BilateralConstraint a bilateral constraint
+             * @param constraintName the name of the constraint
+             * @param Aineq constraint matrix. Number of columns must be > 0
+             * @param bLowerBound lower bound vector. Number of rows must be the same
+             *                    size as the number of rows of Aineq
+             * @param bUpperBound upper bound vector. Number of rows must be the same
+             *                    size as the number of rows of Aineq
+             */
+            BilateralConstraint(const std::string constraintName,
+                                const Eigen::MatrixXd &Aineq,
+                                const Eigen::VectorXd &bLowerBound,
+                                const Eigen::VectorXd &bUpperBound);
+
         };
     }
  }

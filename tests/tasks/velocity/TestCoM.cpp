@@ -1,34 +1,28 @@
-#include <idynutils/tests_utils.h>
-#include <idynutils/cartesian_utils.h>
-#include <idynutils/idynutils.h>
 #include <gtest/gtest.h>
 #include <OpenSoT/tasks/velocity/CoM.h>
-#include <yarp/math/Math.h>
-#include <yarp/math/SVD.h>
+#include <OpenSoT/utils/cartesian_utils.h>
+#include <XBotInterface/ModelInterface.h>
 
-using namespace yarp::math;
+std::string robotology_root = std::getenv("ROBOTOLOGY_ROOT");
+std::string relative_path = "/external/OpenSoT/tests/configs/coman/configs/config_coman_RBDL.yaml";
+std::string _path_to_cfg = robotology_root + relative_path;
 
 namespace {
 
 class testCoMTask: public ::testing::Test
 {
+public:
+
 protected:
-    iDynUtils _robot;
-    iDynUtils _fixed_robot;
-    iDynUtils _normal_robot;
 
     testCoMTask()
-        : _robot("coman",
-                 std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.urdf",
-                 std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.srdf"),
-          _fixed_robot("coman",
-                       std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.urdf",
-                       std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.srdf"),
-          _normal_robot("coman",
-                        std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.urdf",
-                        std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.srdf")
     {
+        _model_ptr = XBot::ModelInterface::getModel(_path_to_cfg);
 
+        if(_model_ptr)
+            std::cout<<"pointer address: "<<_model_ptr.get()<<std::endl;
+        else
+            std::cout<<"pointer is NULL "<<_model_ptr.get()<<std::endl;
     }
 
     virtual ~testCoMTask() {
@@ -43,66 +37,46 @@ protected:
 
     }
 
+    XBot::ModelInterface::Ptr _model_ptr;
+
 };
 
 TEST_F(testCoMTask, testCoMTask_)
 {
     // setting initial position with bent legs
-    yarp::sig::Vector q_leg(6, 0.0),
-                      q_whole(_robot.iDyn3_model.getNrOfDOFs(), 1E-4);
-    q_leg[0] = -25.0*M_PI/180.0;
-    q_leg[3] =  50.0*M_PI/180.0;
-    q_leg[5] = -25.0*M_PI/180.0;
-
-    _robot.fromRobotToIDyn(q_leg, q_whole, _robot.left_leg);
-    _robot.fromRobotToIDyn(q_leg, q_whole, _robot.right_leg);
-
-    _robot.iDyn3_model.setFloatingBaseLink(_robot.left_leg.index);
-    _robot.updateiDyn3Model(q_whole, true);
-
-    _fixed_robot.iDyn3_model.setFloatingBaseLink(_fixed_robot.left_leg.index);
-    _fixed_robot.updateiDyn3Model(q_whole);
-
-    _normal_robot.updateiDyn3Model(q_whole);
-
-    std::cout << "_robot.getCoM() is: " << _robot.iDyn3_model.getCOM().toString() << std::endl;
-    std::cout << "_robot.getCoM(_robot.left_leg.index) is: " << _robot.iDyn3_model.getCOM("",_robot.left_leg.end_effector_index).toString() << std::endl;
-
-    std::cout << "_fixed_robot.getCoM() is: " << _fixed_robot.iDyn3_model.getCOM().toString() << std::endl;
-    std::cout << "_fixed_robot.getCoM(_fixed_robot.left_leg.index) is: " << _fixed_robot.iDyn3_model.getCOM("",_fixed_robot.left_leg.end_effector_index).toString() << std::endl;
-
-    std::cout << "computing _normal_robot with world in waist.." << std::endl;
-    std::cout << "_normal_robot.getCoM() is: " << _normal_robot.iDyn3_model.getCOM().toString() << std::endl;
-    std::cout << "_normal_robot.getCoM(_normal_robot.left_leg.index) is: " << _normal_robot.iDyn3_model.getCOM("",_normal_robot.left_leg.end_effector_index).toString() << std::endl;
-
-    _normal_robot.updateiDyn3Model(q_whole, true);
-
-    std::cout << "computing _normal_robot with proper world.." << std::endl;
-    std::cout << "_normal_robot.getCoM() is: " << _normal_robot.iDyn3_model.getCOM().toString() << std::endl;
-    std::cout << "_normal_robot.getCoM(_normal_robot.left_leg.index) is: " << _normal_robot.iDyn3_model.getCOM("",_normal_robot.left_leg.end_effector_index).toString() << std::endl;
+    Eigen::VectorXd q_whole(_model_ptr->getJointNum());
+    q_whole = Eigen::VectorXd::Constant(q_whole.size(), 1E-4);
+    q_whole[_model_ptr->getDofIndex("RHipSag")] = -25.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("RKneeSag")] = 50.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("RAnkSag")] = -25.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("LHipSag")] = -25.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("LKneeSag")] = 50.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("LAnkSag")] = -25.0*M_PI/180.0;
 
 
-    OpenSoT::tasks::velocity::CoM CoM(q_whole, _robot);
+    _model_ptr->setJointPosition(q_whole);
+    _model_ptr->update();
 
-    EXPECT_TRUE(CoM.getb() == yarp::sig::Vector(3,0.0)) << "b = " << CoM.getb().toString();
+    OpenSoT::tasks::velocity::CoM CoM(q_whole, *(_model_ptr.get()));
+
+    EXPECT_TRUE(CoM.getb() == Eigen::VectorXd::Zero(3)) << "b = " << CoM.getb();
 
     // setting x_ref with a delta offset along the z axis (+2cm)
-    yarp::sig::Vector delta_x(3,0.0);
-                      delta_x(2) = 0.02;
-    yarp::sig::Vector x = _robot.iDyn3_model.getCOM();
-    yarp::sig::Vector x_ref = x + delta_x;
+    Eigen::Vector3d delta_x; delta_x.setZero();
+                    delta_x(2) = 0.02;
+    Eigen::Vector3d x;
+    _model_ptr->getCOM(x);
+    Eigen::Vector3d x_ref = x + delta_x;
 
-    yarp::sig::Matrix J;
+    Eigen::MatrixXd J;
+    _model_ptr->getCOMJacobian(J);
+
     // hack! we need to compute world position in a smarter way....
-    _fixed_robot.updateiDyn3Model(q_whole,true);
-    _fixed_robot.iDyn3_model.getCOMJacobian(J);
-    J.removeCols(0,6);
-    J.removeRows(3,3);
     EXPECT_TRUE(CoM.getA() == J);
     EXPECT_EQ(CoM.getA().rows(), 3);
     EXPECT_EQ(CoM.getb().size(), 3);
 
-    EXPECT_TRUE(CoM.getWeight() == yarp::sig::Matrix(3,3).eye());
+    EXPECT_TRUE(CoM.getWeight() == Eigen::MatrixXd::Identity(3,3));
 
     EXPECT_TRUE(CoM.getConstraints().size() == 0);
 
@@ -115,32 +89,34 @@ TEST_F(testCoMTask, testCoMTask_)
         EXPECT_NEAR(CoM.getb()[i],0,1E-12) << "b[i] = " << CoM.getb()[i];
 
     CoM.setReference(x_ref);
-    yarp::sig::Vector positionError = x_ref - x;
+    Eigen::VectorXd positionError = x_ref - x;
     for(unsigned int i = 0; i < 3; ++i)
-        EXPECT_NEAR(CoM.getb()[i],positionError[i],1E-12) << "b[i] = " << CoM.getb()[i];
+        EXPECT_NEAR(CoM.getb()[i],CoM.getLambda()*positionError[i],1E-12) << "b[i] = " << CoM.getb()[i];
 
-    _robot.updateiDyn3Model(q_whole, true);
     for(unsigned int i = 0; i < 3; ++i)
-        EXPECT_NEAR(CoM.getb()[i],positionError[i],1E-12) << "b[i] = " << CoM.getb()[i];
+        EXPECT_NEAR(CoM.getb()[i],CoM.getLambda()*positionError[i],1E-12) << "b[i] = " << CoM.getb()[i];
 
-    yarp::sig::Vector x_now;
+    Eigen::Vector3d x_now;
+    SVDPseudoInverse<Eigen::MatrixXd> _pinv(CoM.getA(), 1E-6);
     for(unsigned int i = 0; i < 100; ++i)
     {
-        _robot.updateiDyn3Model(q_whole, true);
+        _model_ptr->setJointPosition(q_whole);
+        _model_ptr->update();
 
         CoM.update(q_whole);
 
-        q_whole += pinv(CoM.getA(),1E-6)*CoM.getLambda()*CoM.getb();
+        Eigen::MatrixXd Apinv;
+        _pinv.compute(CoM.getA(), Apinv);
+        q_whole += Apinv*CoM.getb();
 
-        _robot.updateiDyn3Model(q_whole, true);
-        x_now = _robot.iDyn3_model.getCOM();
+        _model_ptr->getCOM(x_now);
         std::cout << "Current error after iteration " << i << " is " << x_ref(2) - x_now(2) << std::endl;
     }
 
 
-    EXPECT_LT( findMax((x_ref - x_now)), 1E-3 ) << "x_ref:" << x_ref.toString() << std::endl
-                                                << "x_now:" << x_now.toString() << std::endl;
-    EXPECT_LT( abs(findMin((x_ref - x_now))), 1E-3 );
+    EXPECT_LT( (x_ref - x_now).maxCoeff(), 1E-3 ) << "x_ref:" << x_ref << std::endl
+                                                << "x_now:" << x_now << std::endl;
+    EXPECT_LT( abs((x_ref - x_now).minCoeff()), 1E-3 );
 
     // checking for the position
     for(unsigned int i = 0; i < 3; ++i) {

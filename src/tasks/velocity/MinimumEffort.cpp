@@ -20,18 +20,18 @@
 #include <cmath>
 
 using namespace OpenSoT::tasks::velocity;
-using namespace yarp::math;
 
-MinimumEffort::MinimumEffort(   const yarp::sig::Vector& x, const iDynUtils& robot_model) :
+
+MinimumEffort::MinimumEffort(   const Eigen::VectorXd& x, const XBot::ModelInterface& robot_model) :
     Task("min_effort", x.size()), _gTauGradientWorker(x, robot_model), _x(x)
 {
     _W.resize(_x_size, _x_size);
-    _W.eye();
+    _W.setIdentity(_x_size, _x_size);
 
     _hessianType = HST_POSDEF;
 
     _A.resize(_x_size, _x_size);
-    _A.eye();
+    _A.setIdentity(_x_size, _x_size);
 
     /* first update. Setting desired pose equal to the actual pose */
     this->_update(x);
@@ -42,12 +42,12 @@ MinimumEffort::~MinimumEffort()
 
 }
 
-void MinimumEffort::_update(const yarp::sig::Vector &x) {
+void MinimumEffort::_update(const Eigen::VectorXd &x) {
 
     _x = x;
     /************************* COMPUTING TASK *****************************/
 
-    _b = -1.0 * cartesian_utils::computeGradient(x, _gTauGradientWorker);
+    _b = -1.0 * _lambda * cartesian_utils::computeGradient(x, _gTauGradientWorker, this->getActiveJointsMask());
 
     /**********************************************************************/
 }

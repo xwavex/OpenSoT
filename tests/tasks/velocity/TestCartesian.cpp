@@ -1,25 +1,31 @@
-#include <idynutils/tests_utils.h>
-#include <idynutils/cartesian_utils.h>
-#include <idynutils/idynutils.h>
 #include <gtest/gtest.h>
 #include <OpenSoT/tasks/velocity/Cartesian.h>
-#include <yarp/math/Math.h>
-#include <yarp/math/SVD.h>
+#include <boost/make_shared.hpp>
+#include <OpenSoT/utils/cartesian_utils.h>
+#include <XBotInterface/ModelInterface.h>
 
-using namespace yarp::math;
 
 namespace {
 
 class testCartesianTask: public ::testing::Test
 {
 protected:
-    iDynUtils _robot;
+    XBot::ModelInterface::Ptr _model_ptr;
+    std::string _path_to_cfg;
 
-    testCartesianTask() : _robot("coman",
-                                 std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.urdf",
-                                 std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.srdf")
+    testCartesianTask()
     {
+        std::string robotology_root = std::getenv("ROBOTOLOGY_ROOT");
+        std::string relative_path = "/external/OpenSoT/tests/configs/coman/configs/config_coman_RBDL.yaml";
 
+        _path_to_cfg = robotology_root + relative_path;
+
+        _model_ptr = XBot::ModelInterface::getModel(_path_to_cfg);
+
+        if(_model_ptr)
+            std::cout<<"pointer address: "<<_model_ptr.get()<<std::endl;
+        else
+            std::cout<<"pointer is NULL "<<_model_ptr.get()<<std::endl;
     }
 
     virtual ~testCartesianTask() {
@@ -36,74 +42,138 @@ protected:
 
 };
 
+TEST_F(testCartesianTask, testSetBaseLink)
+{
+    Eigen::VectorXd q(_model_ptr->getJointNum());
+    q.setZero(q.size());
+
+    q[_model_ptr->getDofIndex("LHipSag")] = -25.0*M_PI/180.0;
+    q[_model_ptr->getDofIndex("LKneeSag")] = 50.0*M_PI/180.0;
+    q[_model_ptr->getDofIndex("LAnkSag")] = -25.0*M_PI/180.0;
+    q[_model_ptr->getDofIndex("LShSag")] =  20.0*M_PI/180.0;
+    q[_model_ptr->getDofIndex("LShLat")] = 10.0*M_PI/180.0;
+    q[_model_ptr->getDofIndex("LElbj")] = -80.0*M_PI/180.0;
+
+    _model_ptr->setJointPosition(q);
+    _model_ptr->update();
+
+    std::string distal_link = "l_wrist";
+    std::string base_link1 = "world";
+    std::string base_link2 = "l_sole";
+    std::string base_link3 = "Waist";
+
+    OpenSoT::tasks::velocity::Cartesian::Ptr l_arm1(
+        new OpenSoT::tasks::velocity::Cartesian("l_arm",q,*(_model_ptr.get()),distal_link,
+                                                base_link1));
+    OpenSoT::tasks::velocity::Cartesian::Ptr l_arm2(
+        new OpenSoT::tasks::velocity::Cartesian("l_arm",q,*(_model_ptr.get()),distal_link,
+                                                base_link2));
+    OpenSoT::tasks::velocity::Cartesian::Ptr l_arm3(
+        new OpenSoT::tasks::velocity::Cartesian("l_arm",q,*(_model_ptr.get()),distal_link,
+                                                base_link3));
+
+    l_arm1->update(q);
+    l_arm2->update(q);
+    l_arm3->update(q);
+
+    EXPECT_TRUE(l_arm1->setBaseLink(base_link2));
+    l_arm1->update(q);
+
+    EXPECT_NEAR((l_arm1->getA() - l_arm2->getA()).norm(), 0.0, 1e-12);
+    EXPECT_NEAR((l_arm1->getb() - l_arm2->getb()).norm(), 0.0, 1e-12);
+    EXPECT_NEAR((l_arm1->getReference() - l_arm2->getReference()).norm(), 0.0, 1e-12);
+    EXPECT_NEAR((l_arm1->getActualPose() - l_arm2->getActualPose()).norm(), 0.0, 1e-12);
+
+    EXPECT_TRUE(l_arm1->setBaseLink(base_link3));
+    l_arm1->update(q);
+
+    EXPECT_NEAR((l_arm1->getA() - l_arm3->getA()).norm(), 0.0, 1e-12);
+    EXPECT_NEAR((l_arm1->getb() - l_arm3->getb()).norm(), 0.0, 1e-12);
+    EXPECT_NEAR((l_arm1->getReference() - l_arm3->getReference()).norm(), 0.0, 1e-12);
+    EXPECT_NEAR((l_arm1->getActualPose() - l_arm3->getActualPose()).norm(), 0.0, 1e-12);
+}
+
 
 TEST_F(testCartesianTask, testCartesianTaskWorldGlobal_)
 {
     // setting initial position with bent legs
-    yarp::sig::Vector q_leg(6, 0.0),
-                      q_whole(_robot.iDyn3_model.getNrOfDOFs(), 0.0);
-    q_leg[0] = -25.0*M_PI/180.0;
-    q_leg[3] =  50.0*M_PI/180.0;
-    q_leg[5] = -25.0*M_PI/180.0;
+    Eigen::VectorXd q_whole(_model_ptr->getJointNum());
+    q_whole.setZero(q_whole.size());
 
-    _robot.fromRobotToIDyn(q_leg, q_whole, _robot.right_leg);
-    _robot.updateiDyn3Model(q_whole, true);
+
+    q_whole[_model_ptr->getDofIndex("RHipSag")] = -25.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("RKneeSag")] = 50.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("RAnkSag")] = -25.0*M_PI/180.0;
+
+    _model_ptr->setJointPosition(q_whole);
+    _model_ptr->update();
 
     OpenSoT::tasks::velocity::Cartesian cartesian("cartesian::right_leg",
                                                  q_whole,
-                                                 _robot,
+                                                 *(_model_ptr.get()),
                                                  "r_sole",
                                                  "world");
 
     // setting x_ref with a delta offset along the z axis (-2cm)
-    yarp::sig::Matrix delta_x(4,4); delta_x.zero();
-                      delta_x(2,3) = -0.02;
-    yarp::sig::Matrix x = _robot.iDyn3_model.getPosition(
-                            _robot.right_leg.end_effector_index);
-    yarp::sig::Matrix x_ref = x + delta_x;
+    Eigen::MatrixXd delta_x(4,4); delta_x.setZero(4,4);
+    delta_x(2,3) = -0.02;
+    Eigen::Affine3d x;
+    _model_ptr->getPose("r_sole", x);
 
-    yarp::sig::Matrix J;
-    _robot.iDyn3_model.getJacobian(_robot.right_leg.end_effector_index, J);
-    J.removeCols(0,6);
-    EXPECT_TRUE(cartesian.getA() == J);
+    std::cout<<"cartesian actual pose: "<<cartesian.getActualPose()<<std::endl;
+    std::cout<<"x: "<<x.matrix()<<std::endl;
+    std::cout<<"delta_x: "<<delta_x<<std::endl;
+
+    Eigen::Affine3d x_ref;
+    x_ref.matrix() = x.matrix() + delta_x;
+    std::cout<<"x_ref: "<<x_ref.matrix()<<std::endl;
+
+    KDL::Jacobian J; J.resize(q_whole.size());
+    _model_ptr->getJacobian("r_sole",KDL::Vector::Zero(), J);
+    EXPECT_TRUE(cartesian.getA() == J.data);
     EXPECT_EQ(cartesian.getA().rows(), 6);
     EXPECT_EQ(cartesian.getb().size(), 6);
 
-    EXPECT_TRUE(cartesian.getWeight() == yarp::sig::Matrix(6,6).eye());
+    EXPECT_TRUE(cartesian.getWeight() == Eigen::MatrixXd::Identity(6,6));
 
     EXPECT_TRUE(cartesian.getConstraints().size() == 0);
 
-    double K = 0.1;
+    double K = 1.0;
     cartesian.setLambda(K);
     EXPECT_DOUBLE_EQ(cartesian.getLambda(), K);
 
-    cartesian.setReference(x_ref);
+    cartesian.setReference(x_ref.matrix());
     cartesian.update(q_whole);
-    yarp::sig::Vector positionError, orientationError;
-    cartesian_utils::computeCartesianError(x, x_ref,
+    Eigen::VectorXd positionError, orientationError;
+    cartesian_utils::computeCartesianError(x.matrix(), x_ref.matrix(),
                                            positionError, orientationError);
 
     double orientationErrorGain = 1.0;
     cartesian.setOrientationErrorGain(orientationErrorGain);
 
-    EXPECT_TRUE(cartesian.getb() == cat(positionError, -orientationErrorGain*orientationError));
+    Eigen::VectorXd tmp(6);
+    tmp<<cartesian.getLambda()*positionError,-cartesian.getLambda()*orientationErrorGain*orientationError;
+    EXPECT_TRUE(cartesian.getb() == tmp);
 
-    yarp::sig::Matrix x_now;
-    for(unsigned int i = 0; i < 60; ++i)
+    std::cout<<"cartesian.getb(): ["<<cartesian.getb()<<"]"<<std::endl;
+    std::cout<<"error: ["<<tmp<<"]"<<std::endl;
+
+    Eigen::Affine3d x_now;
+    for(unsigned int i = 0; i < 2000; ++i)
     {
-        _robot.updateiDyn3Model(q_whole,true);
+        _model_ptr->setJointPosition(q_whole);
+        _model_ptr->update();
+
         cartesian._update(q_whole);
-        q_whole += pinv(cartesian.getA(),1E-7)*cartesian.getLambda()*cartesian.getb();
-        _robot.updateiDyn3Model(q_whole,true);
-        x_now = _robot.iDyn3_model.getPosition(
-                      _robot.right_leg.end_effector_index);
-        //std::cout << "Current error at iteration " << i << " is " << x_ref(2,3) - x_now(2,3) << std::endl;
+        q_whole += cartesian.getA().transpose()*cartesian.getb();
+
+        _model_ptr->setJointPosition(q_whole);
+        _model_ptr->update();
+
+        _model_ptr->getPose("r_sole", x_now);
+        std::cout << "Current error at iteration " << i << " is " << x_ref(2,3) - x_now(2,3) << std::endl;
     }
 
-
-
-    EXPECT_LT( findMax((x_ref-x_now).subcol(0,3,3)), 1E-3 );
-    EXPECT_LT( abs(findMin((x_ref-x_now).subcol(0,3,3))), 1E-3 );
     // checking for the position
     for(unsigned int i = 0; i < 3; ++i) {
         EXPECT_NEAR(x_ref(i,3),x_now(i,3),1E-4);
@@ -112,16 +182,6 @@ TEST_F(testCartesianTask, testCartesianTaskWorldGlobal_)
         for(unsigned int j = 0; j < 3; ++j) {
             EXPECT_NEAR(x_ref(i,j),x_now(i,j),1E-4);
         }
-    }
-
-    for(unsigned int i = 0; i < 6; ++i)
-        EXPECT_NEAR(q_whole[_robot.left_leg.joint_numbers[i]],0.0,1E-16);
-    for(unsigned int i = 0; i < 7; ++i) {
-        EXPECT_DOUBLE_EQ(q_whole[_robot.left_arm.joint_numbers[i]],0.0);
-        EXPECT_DOUBLE_EQ(q_whole[_robot.right_arm.joint_numbers[i]],0.0);
-    }
-    for(unsigned int i = 0; i < 3; ++i) {
-        EXPECT_DOUBLE_EQ(q_whole[_robot.torso.joint_numbers[i]],0.0);
     }
 }
 
@@ -129,70 +189,84 @@ TEST_F(testCartesianTask, testCartesianTaskWorldGlobal_)
 TEST_F(testCartesianTask, testCartesianTaskWorldLocal_)
 {
     // setting initial position with bent legs
-    yarp::sig::Vector q_leg(6, 0.0),
-                      q_whole(_robot.iDyn3_model.getNrOfDOFs(), 0.0);
-    q_leg[0] = -25.0*M_PI/180.0;
-    q_leg[3] =  50.0*M_PI/180.0;
-    q_leg[5] = -25.0*M_PI/180.0;
+    Eigen::VectorXd q_whole(_model_ptr->getJointNum());
+    q_whole.setZero(q_whole.size());
 
-    _robot.fromRobotToIDyn(q_leg, q_whole, _robot.left_leg);
-    _robot.updateiDyn3Model(q_whole);
+    q_whole[_model_ptr->getDofIndex("RHipSag")] = -25.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("RKneeSag")] = 50.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("RAnkSag")] = -25.0*M_PI/180.0;
+
+    _model_ptr->setJointPosition(q_whole);
+    _model_ptr->update();
+
 
     OpenSoT::tasks::velocity::Cartesian cartesian("cartesian::left_leg",
                                                  q_whole,
-                                                 _robot,
+                                                 *(_model_ptr.get()),
                                                  "l_sole",
-                                                 "world");
+                                                 "r_sole");
 
-    // setting x_ref with a delta offset along the z axis (-2cm)
-    yarp::sig::Matrix delta_x(4,4); delta_x.zero();
-                      delta_x(2,3) = -0.02;
-    yarp::sig::Matrix x = _robot.iDyn3_model.getPosition(
-                            _robot.left_leg.end_effector_index);
-    yarp::sig::Matrix x_ref = x + delta_x;
+    Eigen::MatrixXd delta_x(4,4); delta_x.setZero(4,4);
+    delta_x(2,3) = -0.02;
+    Eigen::Affine3d x;
+    _model_ptr->getPose("l_sole","r_sole", x);
 
-    yarp::sig::Matrix J;
-    _robot.iDyn3_model.getJacobian(_robot.left_leg.end_effector_index, J);
-    J.removeCols(0,6);
-    //EXPECT_TRUE(cartesian.getA() == J);
+    std::cout<<"cartesian actual pose: "<<cartesian.getActualPose()<<std::endl;
+    std::cout<<"x: "<<x.matrix()<<std::endl;
+    std::cout<<"delta_x: "<<delta_x<<std::endl;
+
+    Eigen::Affine3d x_ref;
+    x_ref.matrix() = x.matrix() + delta_x;
+    std::cout<<"x_ref: "<<x_ref.matrix()<<std::endl;
+
+    KDL::Jacobian J; J.resize(q_whole.size());
+    _model_ptr->getRelativeJacobian("l_sole","r_sole", J);
+    std::cout<<"getA(): "<<cartesian.getA()<<std::endl;
+    EXPECT_TRUE(cartesian.getA() == J.data);
     EXPECT_EQ(cartesian.getA().rows(), 6);
     EXPECT_EQ(cartesian.getb().size(), 6);
 
-    EXPECT_TRUE(cartesian.getWeight() == yarp::sig::Matrix(6,6).eye());
+    EXPECT_TRUE(cartesian.getWeight() == Eigen::MatrixXd::Identity(6,6));
 
     EXPECT_TRUE(cartesian.getConstraints().size() == 0);
 
-    double K = 0.1;
+    double K = 0.5;
     cartesian.setLambda(K);
     EXPECT_DOUBLE_EQ(cartesian.getLambda(), K);
 
-    cartesian.setReference(x_ref);
+    cartesian.setReference(x_ref.matrix());
     cartesian.update(q_whole);
-    yarp::sig::Vector positionError, orientationError;
-    cartesian_utils::computeCartesianError(x, x_ref,
+    Eigen::VectorXd positionError, orientationError;
+    cartesian_utils::computeCartesianError(x.matrix(), x_ref.matrix(),
                                            positionError, orientationError);
 
     double orientationErrorGain = 1.0;
     cartesian.setOrientationErrorGain(orientationErrorGain);
 
-    EXPECT_TRUE(cartesian.getb() == cat(positionError, -orientationErrorGain*orientationError));
+    Eigen::VectorXd tmp(6);
+    tmp<<cartesian.getLambda()*positionError,-cartesian.getLambda()*orientationErrorGain*orientationError;
+    EXPECT_TRUE(cartesian.getb() == tmp);
 
-    yarp::sig::Matrix x_now;
-    for(unsigned int i = 0; i < 60; ++i)
+
+    std::cout<<"cartesian.getb(): ["<<cartesian.getb()<<"]"<<std::endl;
+    std::cout<<"error: ["<<tmp<<"]"<<std::endl;
+
+    Eigen::Affine3d x_now;
+    for(unsigned int i = 0; i < 1000; ++i)
     {
-        _robot.updateiDyn3Model(q_whole);
+        _model_ptr->setJointPosition(q_whole);
+        _model_ptr->update();
+
         cartesian._update(q_whole);
-        q_whole += pinv(cartesian.getA(),1E-7)*cartesian.getLambda()*cartesian.getb();
-        _robot.updateiDyn3Model(q_whole);
-        x_now = _robot.iDyn3_model.getPosition(
-                      _robot.left_leg.end_effector_index);
-        //std::cout << "Current error at iteration " << i << " is " << x_ref(2,3) - x_now(2,3) << std::endl;
+        q_whole += cartesian.getA().transpose()*cartesian.getb();
+        _model_ptr->setJointPosition(q_whole);
+        _model_ptr->update();
+
+        _model_ptr->getPose("l_sole","r_sole", x_now);
+        std::cout << "Current error at iteration " << i << " is " << x_ref(2,3) - x_now(2,3) << std::endl;
     }
 
 
-
-    EXPECT_LT( findMax((x_ref-x_now).subcol(0,3,3)), 1E-3 );
-    EXPECT_LT( abs(findMin((x_ref-x_now).subcol(0,3,3))), 1E-3 );
     // checking for the position
     for(unsigned int i = 0; i < 3; ++i) {
         EXPECT_NEAR(x_ref(i,3),x_now(i,3),1E-4);
@@ -203,281 +277,99 @@ TEST_F(testCartesianTask, testCartesianTaskWorldLocal_)
         }
     }
 
-    for(unsigned int i = 0; i < 6; ++i)
-        EXPECT_DOUBLE_EQ(q_whole[_robot.right_leg.joint_numbers[i]],0.0);
-    for(unsigned int i = 0; i < 7; ++i) {
-        EXPECT_DOUBLE_EQ(q_whole[_robot.left_arm.joint_numbers[i]],0.0);
-        EXPECT_DOUBLE_EQ(q_whole[_robot.right_arm.joint_numbers[i]],0.0);
-    }
-    for(unsigned int i = 0; i < 3; ++i) {
-        EXPECT_DOUBLE_EQ(q_whole[_robot.torso.joint_numbers[i]],0.0);
-    }
 }
 
 
-TEST_F(testCartesianTask, testCartesianTaskRelativeNoUpdateWorld_)
-{
-    bool update_world = false;
-    // setting initial position with bent legs
-    yarp::sig::Vector q_leg(6, 0.0),
-                      q_whole(_robot.iDyn3_model.getNrOfDOFs(), 0.0);
-    q_leg[0] = -25.0*M_PI/180.0;
-    q_leg[3] =  50.0*M_PI/180.0;
-    q_leg[5] = -25.0*M_PI/180.0;
-
-    _robot.fromRobotToIDyn(q_leg, q_whole, _robot.left_leg);
-
-    yarp::sig::Vector arm(_robot.left_arm.getNrOfDOFs(), 0.0);
-    arm[0] = 20.0 * M_PI/180.0;
-    arm[1] = 10.0 * M_PI/180.0;
-    arm[3] = -80.0 * M_PI/180.0;
-    _robot.fromRobotToIDyn(arm, q_whole, _robot.left_arm);
-
-    _robot.updateiDyn3Model(q_whole, update_world);
-
-    OpenSoT::tasks::velocity::Cartesian cartesian("cartesian::left_leg",
-                                                 q_whole,
-                                                 _robot,
-                                                 "l_wrist",
-                                                 "l_sole");
-
-    // setting x_ref with a delta offset along the z axis (-2cm)
-    yarp::sig::Matrix delta_x(4,4); delta_x.zero();
-                      delta_x(2,3) = -0.02;
-    yarp::sig::Matrix x = _robot.iDyn3_model.getPosition(
-                            _robot.left_leg.end_effector_index,
-                            _robot.left_arm.end_effector_index);
-    yarp::sig::Matrix x_ref = x + delta_x;
-
-    yarp::sig::Matrix J;
-    _robot.iDyn3_model.getRelativeJacobian(_robot.left_arm.end_effector_index,
-                                           _robot.left_leg.end_effector_index, J);
-    //EXPECT_TRUE(cartesian.getA() == J);
-    EXPECT_EQ(cartesian.getA().rows(), 6);
-    EXPECT_EQ(cartesian.getb().size(), 6);
-
-    EXPECT_TRUE(cartesian.getWeight() == yarp::sig::Matrix(6,6).eye());
-
-    EXPECT_TRUE(cartesian.getConstraints().size() == 0);
-
-    double K = 0.1;
-    cartesian.setLambda(K);
-    EXPECT_DOUBLE_EQ(cartesian.getLambda(), K);
-
-    cartesian.setReference(x_ref);
-    cartesian.update(q_whole);
-    yarp::sig::Vector positionError, orientationError;
-    cartesian_utils::computeCartesianError(x, x_ref,
-                                           positionError, orientationError);
-
-    double orientationErrorGain = 1.0;
-    cartesian.setOrientationErrorGain(orientationErrorGain);
-
-    EXPECT_TRUE(cartesian.getb() == cat(positionError, -orientationErrorGain*orientationError));
-
-    yarp::sig::Matrix x_now;
-    for(unsigned int i = 0; i < 120; ++i)
-    {
-        _robot.updateiDyn3Model(q_whole, update_world);
-        cartesian._update(q_whole);
-        q_whole += pinv(cartesian.getA(),1E-7)*cartesian.getLambda()*cartesian.getb();
-        _robot.updateiDyn3Model(q_whole, update_world);
-        x_now = _robot.iDyn3_model.getPosition(
-                    _robot.left_leg.end_effector_index,
-                    _robot.left_arm.end_effector_index);
-        //std::cout << "Current error at iteration " << i << " is " << x_ref(2,3) - x_now(2,3) << std::endl;
-    }
-
-
-
-    EXPECT_LT( findMax((x_ref-x_now).subcol(0,3,3)), 1E-3 );
-    EXPECT_LT( abs(findMin((x_ref-x_now).subcol(0,3,3))), 1E-3 );
-    // checking for the position
-    for(unsigned int i = 0; i < 3; ++i) {
-        EXPECT_NEAR(x_ref(i,3),x_now(i,3),1E-4);
-    }
-    for(unsigned int i = 0; i < 3; ++i) {
-        for(unsigned int j = 0; j < 3; ++j) {
-            EXPECT_NEAR(x_ref(i,j),x_now(i,j),1E-4);
-        }
-    }
-
-    for(unsigned int i = 0; i < 6; ++i)
-        EXPECT_DOUBLE_EQ(q_whole[_robot.right_leg.joint_numbers[i]],0.0);
-    for(unsigned int i = 0; i < 7; ++i) {
-        EXPECT_DOUBLE_EQ(q_whole[_robot.right_arm.joint_numbers[i]],0.0);
-    }
-}
-
-TEST_F(testCartesianTask, testCartesianTaskRelativeWaistNoUpdateWorld_)
-{
-    bool update_world = false;
-    // setting initial position with bent legs
-    yarp::sig::Vector q_whole(_robot.iDyn3_model.getNrOfDOFs(), 0.0);
-
-    yarp::sig::Vector arm(_robot.left_arm.getNrOfDOFs(), 0.0);
-    arm[0] = 20.0 * M_PI/180.0;
-    arm[1] = 10.0 * M_PI/180.0;
-    arm[3] = -80.0 * M_PI/180.0;
-    _robot.fromRobotToIDyn(arm, q_whole, _robot.left_arm);
-
-    _robot.updateiDyn3Model(q_whole, update_world);
-
-    OpenSoT::tasks::velocity::Cartesian cartesian("cartesian::l_wrist",
-                                                 q_whole,
-                                                 _robot,
-                                                 "l_wrist",
-                                                 "Waist");
-
-    // setting x_ref with a delta offset along the z axis (-2cm)
-    yarp::sig::Matrix delta_x(4,4); delta_x.zero();
-                      delta_x(2,3) = -0.02;
-    yarp::sig::Matrix x = _robot.iDyn3_model.getPosition(
-                            0,
-                            _robot.left_arm.end_effector_index);
-    yarp::sig::Matrix x_ref = x + delta_x;
-
-    yarp::sig::Matrix J;
-    _robot.iDyn3_model.getRelativeJacobian(_robot.left_arm.end_effector_index,
-                                           0, J);
-    //EXPECT_TRUE(cartesian.getA() == J);
-    EXPECT_EQ(cartesian.getA().rows(), 6);
-    EXPECT_EQ(cartesian.getb().size(), 6);
-
-    EXPECT_TRUE(cartesian.getWeight() == yarp::sig::Matrix(6,6).eye());
-
-    EXPECT_TRUE(cartesian.getConstraints().size() == 0);
-
-    double K = 0.1;
-    cartesian.setLambda(K);
-    EXPECT_DOUBLE_EQ(cartesian.getLambda(), K);
-
-    cartesian.setReference(x_ref);
-    cartesian.update(q_whole);
-    yarp::sig::Vector positionError, orientationError;
-    cartesian_utils::computeCartesianError(x, x_ref,
-                                           positionError, orientationError);
-
-    double orientationErrorGain = 1.0;
-    cartesian.setOrientationErrorGain(orientationErrorGain);
-
-    EXPECT_TRUE(cartesian.getb() == cat(positionError, -orientationErrorGain*orientationError));
-
-    yarp::sig::Matrix x_now;
-    for(unsigned int i = 0; i < 120; ++i)
-    {
-        _robot.updateiDyn3Model(q_whole, update_world);
-        cartesian._update(q_whole);
-        q_whole += pinv(cartesian.getA(),1E-7)*cartesian.getLambda()*cartesian.getb();
-        _robot.updateiDyn3Model(q_whole, update_world);
-        x_now = _robot.iDyn3_model.getPosition(
-                      0,
-                      _robot.left_arm.end_effector_index);
-        //std::cout << "Current error at iteration " << i << " is " << x_ref(2,3) - x_now(2,3) << std::endl;
-    }
-
-
-
-    EXPECT_LT( findMax((x_ref-x_now).subcol(0,3,3)), 1E-3 );
-    EXPECT_LT( abs(findMin((x_ref-x_now).subcol(0,3,3))), 1E-3 );
-    // checking for the position
-    for(unsigned int i = 0; i < 3; ++i) {
-        EXPECT_NEAR(x_ref(i,3),x_now(i,3),1E-4);
-    }
-    for(unsigned int i = 0; i < 3; ++i) {
-        for(unsigned int j = 0; j < 3; ++j) {
-            EXPECT_NEAR(x_ref(i,j),x_now(i,j),1E-4);
-        }
-    }
-
-    for(unsigned int i = 0; i < 6; ++i) {
-        EXPECT_NEAR(q_whole[_robot.left_leg.joint_numbers[i]],0.0,1E-16);
-        EXPECT_NEAR(q_whole[_robot.right_leg.joint_numbers[i]],0.0,1E-16);
-    }
-    for(unsigned int i = 0; i < 7; ++i) {
-        EXPECT_DOUBLE_EQ(q_whole[_robot.right_arm.joint_numbers[i]],0.0);
-    }
-
-}
 
 
 TEST_F(testCartesianTask, testCartesianTaskRelativeUpdateWorld_)
 {
-    bool update_world = true;
-    // setting initial position with bent legs
-    yarp::sig::Vector q_leg(6, 0.0),
-                      q_whole(_robot.iDyn3_model.getNrOfDOFs(), 0.0);
-    q_leg[0] = -25.0*M_PI/180.0;
-    q_leg[3] =  50.0*M_PI/180.0;
-    q_leg[5] = -25.0*M_PI/180.0;
+    Eigen::VectorXd q_whole(_model_ptr->getJointNum());
+    q_whole.setZero(q_whole.size());
 
-    _robot.fromRobotToIDyn(q_leg, q_whole, _robot.left_leg);
+    q_whole[_model_ptr->getDofIndex("LHipSag")] = -25.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("LKneeSag")] = 50.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("LAnkSag")] = -25.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("LShSag")] = 20.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("LShLat")] = 10.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("LElbj")] = -80.0*M_PI/180.0;
 
-    yarp::sig::Vector arm(_robot.left_arm.getNrOfDOFs(), 0.0);
-    arm[0] = 20.0 * M_PI/180.0;
-    arm[1] = 10.0 * M_PI/180.0;
-    arm[3] = -80.0 * M_PI/180.0;
-    _robot.fromRobotToIDyn(arm, q_whole, _robot.left_arm);
+    _model_ptr->setJointPosition(q_whole);
+    _model_ptr->update();
 
-    _robot.updateiDyn3Model(q_whole, update_world);
 
     OpenSoT::tasks::velocity::Cartesian cartesian("cartesian::left_leg",
                                                  q_whole,
-                                                 _robot,
+                                                 *(_model_ptr.get()),
                                                  "l_wrist",
                                                  "l_sole");
 
-    // setting x_ref with a delta offset along the z axis (-2cm)
-    yarp::sig::Matrix delta_x(4,4); delta_x.zero();
-                      delta_x(2,3) = -0.02;
-    yarp::sig::Matrix x = _robot.iDyn3_model.getPosition(
-                            _robot.left_leg.end_effector_index,
-                            _robot.left_arm.end_effector_index);
-    yarp::sig::Matrix x_ref = x + delta_x;
+    XBot::ModelInterface& reference_to_model_interface = *_model_ptr;
+    Eigen::MatrixXd JJJ(6, q_whole.size());
+    reference_to_model_interface.getRelativeJacobian("l_sole", "l_wrist", JJJ);
+    std::cout<<"reference_to_model_interface J: "<<JJJ<<std::endl;
 
-    yarp::sig::Matrix J;
-    _robot.iDyn3_model.getRelativeJacobian(_robot.left_arm.end_effector_index,
-                                           _robot.left_leg.end_effector_index, J);
-    //EXPECT_TRUE(cartesian.getA() == J);
+    Eigen::MatrixXd delta_x(4,4); delta_x.setZero(4,4);
+    delta_x(2,3) = -0.02;
+    Eigen::Affine3d x;
+    _model_ptr->getPose("l_wrist","l_sole", x);
+
+    std::cout<<"cartesian actual pose: "<<cartesian.getActualPose()<<std::endl;
+    std::cout<<"x: "<<x.matrix()<<std::endl;
+    std::cout<<"delta_x: "<<delta_x<<std::endl;
+
+    Eigen::Affine3d x_ref;
+    x_ref.matrix() = x.matrix() + delta_x;
+    std::cout<<"x_ref: "<<x_ref.matrix()<<std::endl;
+
+    KDL::Jacobian J; J.resize(q_whole.size());
+    _model_ptr->getRelativeJacobian("l_wrist","l_sole", J);
+    std::cout<<"getA(): "<<cartesian.getA()<<std::endl;
+    std::cout<<"J model: "<<J.data<<std::endl;
+    EXPECT_TRUE(cartesian.getA() == J.data);
     EXPECT_EQ(cartesian.getA().rows(), 6);
     EXPECT_EQ(cartesian.getb().size(), 6);
 
-    EXPECT_TRUE(cartesian.getWeight() == yarp::sig::Matrix(6,6).eye());
+    EXPECT_TRUE(cartesian.getWeight() == Eigen::MatrixXd::Identity(6,6));
 
     EXPECT_TRUE(cartesian.getConstraints().size() == 0);
 
-    double K = 0.1;
+    double K = 0.5;
     cartesian.setLambda(K);
     EXPECT_DOUBLE_EQ(cartesian.getLambda(), K);
 
-    cartesian.setReference(x_ref);
+    cartesian.setReference(x_ref.matrix());
     cartesian.update(q_whole);
-    yarp::sig::Vector positionError, orientationError;
-    cartesian_utils::computeCartesianError(x, x_ref,
+    Eigen::VectorXd positionError, orientationError;
+    cartesian_utils::computeCartesianError(x.matrix(), x_ref.matrix(),
                                            positionError, orientationError);
 
     double orientationErrorGain = 1.0;
     cartesian.setOrientationErrorGain(orientationErrorGain);
 
-    EXPECT_TRUE(cartesian.getb() == cat(positionError, -orientationErrorGain*orientationError));
+    Eigen::VectorXd tmp(6);
+    tmp<<cartesian.getLambda()*positionError,-cartesian.getLambda()*orientationErrorGain*orientationError;
+    EXPECT_TRUE(cartesian.getb() == tmp);
 
-    yarp::sig::Matrix x_now;
-    for(unsigned int i = 0; i < 120; ++i)
+
+    std::cout<<"cartesian.getb(): ["<<cartesian.getb()<<"]"<<std::endl;
+    std::cout<<"error: ["<<tmp<<"]"<<std::endl;
+
+    Eigen::Affine3d x_now;
+    for(unsigned int i = 0; i < 1000; ++i)
     {
-        _robot.updateiDyn3Model(q_whole, update_world);
+        _model_ptr->setJointPosition(q_whole);
+        _model_ptr->update();
         cartesian._update(q_whole);
-        q_whole += pinv(cartesian.getA(),1E-7)*cartesian.getLambda()*cartesian.getb();
-        _robot.updateiDyn3Model(q_whole, update_world);
-        x_now = _robot.iDyn3_model.getPosition(
-                      _robot.left_leg.end_effector_index,
-                      _robot.left_arm.end_effector_index);
-        //std::cout << "Current error at iteration " << i << " is " << x_ref(2,3) - x_now(2,3) << std::endl;
+        q_whole += cartesian.getA().transpose()*cartesian.getb();
+        _model_ptr->setJointPosition(q_whole);
+        _model_ptr->update();
+        _model_ptr->getPose("l_wrist","l_sole", x_now);
+        std::cout << "Current error at iteration " << i << " is " << x_ref(2,3) - x_now(2,3) << std::endl;
     }
 
 
 
-    EXPECT_LT( findMax((x_ref-x_now).subcol(0,3,3)), 1E-3 );
-    EXPECT_LT( abs(findMin((x_ref-x_now).subcol(0,3,3))), 1E-3 );
     // checking for the position
     for(unsigned int i = 0; i < 3; ++i) {
         EXPECT_NEAR(x_ref(i,3),x_now(i,3),1E-4);
@@ -486,86 +378,92 @@ TEST_F(testCartesianTask, testCartesianTaskRelativeUpdateWorld_)
         for(unsigned int j = 0; j < 3; ++j) {
             EXPECT_NEAR(x_ref(i,j),x_now(i,j),1E-4);
         }
-    }
-
-    for(unsigned int i = 0; i < 6; ++i)
-        EXPECT_DOUBLE_EQ(q_whole[_robot.right_leg.joint_numbers[i]],0.0);
-    for(unsigned int i = 0; i < 7; ++i) {
-        EXPECT_DOUBLE_EQ(q_whole[_robot.right_arm.joint_numbers[i]],0.0);
     }
 }
 
 TEST_F(testCartesianTask, testCartesianTaskRelativeWaistUpdateWorld_)
 {
-    bool update_world = true;
-    // setting initial position with bent legs
-    yarp::sig::Vector q_whole(_robot.iDyn3_model.getNrOfDOFs(), 0.0);
+    Eigen::VectorXd q_whole(_model_ptr->getJointNum());
+    q_whole.setZero(q_whole.size());
 
-    yarp::sig::Vector arm(_robot.left_arm.getNrOfDOFs(), 0.0);
-    arm[0] = 20.0 * M_PI/180.0;
-    arm[1] = 10.0 * M_PI/180.0;
-    arm[3] = -80.0 * M_PI/180.0;
-    _robot.fromRobotToIDyn(arm, q_whole, _robot.left_arm);
+    q_whole[_model_ptr->getDofIndex("LShSag")] = 20.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("LShLat")] = 10.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("LElbj")] = -80.0*M_PI/180.0;
 
-    _robot.updateiDyn3Model(q_whole, update_world);
+    _model_ptr->setJointPosition(q_whole);
+    _model_ptr->update();
 
-    OpenSoT::tasks::velocity::Cartesian cartesian("cartesian::l_wrist",
+
+    OpenSoT::tasks::velocity::Cartesian cartesian("cartesian::left_leg",
                                                  q_whole,
-                                                 _robot,
+                                                 *(_model_ptr.get()),
                                                  "l_wrist",
                                                  "Waist");
+    XBot::ModelInterface& reference_to_model_interface = *_model_ptr;
+    Eigen::MatrixXd JJJ(6, q_whole.size());
+    reference_to_model_interface.getRelativeJacobian("Waist", "l_wrist", JJJ);
+    std::cout<<"reference_to_model_interface J: "<<JJJ<<std::endl;
 
-    // setting x_ref with a delta offset along the z axis (-2cm)
-    yarp::sig::Matrix delta_x(4,4); delta_x.zero();
-                      delta_x(2,3) = -0.02;
-    yarp::sig::Matrix x = _robot.iDyn3_model.getPosition(
-                            0,
-                            _robot.left_arm.end_effector_index);
-    yarp::sig::Matrix x_ref = x + delta_x;
+    Eigen::MatrixXd delta_x(4,4); delta_x.setZero(4,4);
+    delta_x(2,3) = -0.02;
+    Eigen::Affine3d x;
+    _model_ptr->getPose("l_wrist","Waist", x);
 
-    yarp::sig::Matrix J;
-    _robot.iDyn3_model.getRelativeJacobian(_robot.left_arm.end_effector_index,
-                                           0, J);
-    //EXPECT_TRUE(cartesian.getA() == J);
+    std::cout<<"cartesian actual pose: "<<cartesian.getActualPose()<<std::endl;
+    std::cout<<"x: "<<x.matrix()<<std::endl;
+    std::cout<<"delta_x: "<<delta_x<<std::endl;
+
+    Eigen::Affine3d x_ref;
+    x_ref.matrix() = x.matrix() + delta_x;
+    std::cout<<"x_ref: "<<x_ref.matrix()<<std::endl;
+
+    KDL::Jacobian J; J.resize(q_whole.size());
+    _model_ptr->getRelativeJacobian("l_wrist","Waist", J);
+    std::cout<<"getA(): "<<cartesian.getA()<<std::endl;
+    std::cout<<"J model: "<<J.data<<std::endl;
+    EXPECT_TRUE(cartesian.getA() == J.data);
     EXPECT_EQ(cartesian.getA().rows(), 6);
     EXPECT_EQ(cartesian.getb().size(), 6);
 
-    EXPECT_TRUE(cartesian.getWeight() == yarp::sig::Matrix(6,6).eye());
+    EXPECT_TRUE(cartesian.getWeight() == Eigen::MatrixXd::Identity(6,6));
 
     EXPECT_TRUE(cartesian.getConstraints().size() == 0);
 
-    double K = 0.1;
+    double K = 0.5;
     cartesian.setLambda(K);
     EXPECT_DOUBLE_EQ(cartesian.getLambda(), K);
 
-    cartesian.setReference(x_ref);
+    cartesian.setReference(x_ref.matrix());
     cartesian.update(q_whole);
-    yarp::sig::Vector positionError, orientationError;
-    cartesian_utils::computeCartesianError(x, x_ref,
+    Eigen::VectorXd positionError, orientationError;
+    cartesian_utils::computeCartesianError(x.matrix(), x_ref.matrix(),
                                            positionError, orientationError);
 
     double orientationErrorGain = 1.0;
     cartesian.setOrientationErrorGain(orientationErrorGain);
 
-    EXPECT_TRUE(cartesian.getb() == cat(positionError, -orientationErrorGain*orientationError));
+    Eigen::VectorXd tmp(6);
+    tmp<<cartesian.getLambda()*positionError,-cartesian.getLambda()*orientationErrorGain*orientationError;
+    EXPECT_TRUE(cartesian.getb() == tmp);
 
-    yarp::sig::Matrix x_now;
-    for(unsigned int i = 0; i < 120; ++i)
+
+    std::cout<<"cartesian.getb(): ["<<cartesian.getb()<<"]"<<std::endl;
+    std::cout<<"error: ["<<tmp<<"]"<<std::endl;
+
+    Eigen::Affine3d x_now;
+    for(unsigned int i = 0; i < 1000; ++i)
     {
-        _robot.updateiDyn3Model(q_whole, update_world);
+        _model_ptr->setJointPosition(q_whole);
+        _model_ptr->update();
         cartesian._update(q_whole);
-        q_whole += pinv(cartesian.getA(),1E-7)*cartesian.getLambda()*cartesian.getb();
-        _robot.updateiDyn3Model(q_whole, update_world);
-        x_now = _robot.iDyn3_model.getPosition(
-                      0,
-                      _robot.left_arm.end_effector_index);
-        //std::cout << "Current error at iteration " << i << " is " << x_ref(2,3) - x_now(2,3) << std::endl;
+        q_whole += cartesian.getA().transpose()*cartesian.getb();
+        _model_ptr->setJointPosition(q_whole);
+        _model_ptr->update();
+        _model_ptr->getPose("l_wrist","Waist", x_now);
+        std::cout << "Current error at iteration " << i << " is " << x_ref(2,3) - x_now(2,3) << std::endl;
     }
 
 
-
-    EXPECT_LT( findMax((x_ref-x_now).subcol(0,3,3)), 1E-3 );
-    EXPECT_LT( abs(findMin((x_ref-x_now).subcol(0,3,3))), 1E-3 );
     // checking for the position
     for(unsigned int i = 0; i < 3; ++i) {
         EXPECT_NEAR(x_ref(i,3),x_now(i,3),1E-4);
@@ -576,87 +474,95 @@ TEST_F(testCartesianTask, testCartesianTaskRelativeWaistUpdateWorld_)
         }
     }
 
-    for(unsigned int i = 0; i < 6; ++i) {
-        EXPECT_NEAR(q_whole[_robot.left_leg.joint_numbers[i]],0.0,1E-16);
-        EXPECT_NEAR(q_whole[_robot.right_leg.joint_numbers[i]],0.0,1E-16);
-    }
-    for(unsigned int i = 0; i < 7; ++i) {
-        EXPECT_DOUBLE_EQ(q_whole[_robot.right_arm.joint_numbers[i]],0.0);
-    }
 
 }
 
 TEST_F(testCartesianTask, testActiveJointsMask)
 {
-    bool update_world = true;
-    // setting initial position with bent legs
-    yarp::sig::Vector q_whole(_robot.iDyn3_model.getNrOfDOFs(), 0.0);
+    Eigen::VectorXd q_whole(_model_ptr->getJointNum());
+    q_whole.setZero(q_whole.size());
 
-    _robot.setFloatingBaseLink(_robot.left_leg.end_effector_name);
 
-    yarp::sig::Vector l_leg(_robot.left_leg.getNrOfDOFs(), 0.0);
-    l_leg[0] = -20.0 * M_PI/180.0;
-    l_leg[1] = 10.0 * M_PI/180.0;
-    l_leg[2] = 10.0 * M_PI/180.0;
-    l_leg[3] = -80.0 * M_PI/180.0;
-    l_leg[4] = -10.0 * M_PI/180.0;
-    l_leg[5] = -10.0 * M_PI/180.0;
-    _robot.fromRobotToIDyn(l_leg, q_whole, _robot.left_leg);
-    yarp::sig::Vector torso(_robot.torso.getNrOfDOFs(), 0.0);
-    torso[0] = -10.0 * M_PI/180.0;
-    torso[1] = -10.0 * M_PI/180.0;
-    torso[2] = -10.0 * M_PI/180.0;
-    _robot.fromRobotToIDyn(torso, q_whole, _robot.torso);
+    q_whole[_model_ptr->getDofIndex("LHipSag")] = -20.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("LHipLat")] = 10.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("LHipYaw")] = 10.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("LKneeSag")] = -80.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("LAnkLat")] = -10.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("LAnkSag")] = -10.0*M_PI/180.0;
 
-    _robot.updateiDyn3Model(q_whole, update_world);
+    q_whole[_model_ptr->getDofIndex("WaistLat")] = -10.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("WaistSag")] = -10.0*M_PI/180.0;
+    q_whole[_model_ptr->getDofIndex("WaistYaw")] = -10.0*M_PI/180.0;
+
+    _model_ptr->setJointPosition(q_whole);
+    _model_ptr->update();
+
 
     OpenSoT::tasks::velocity::Cartesian cartesian("cartesian::torso",
                                                  q_whole,
-                                                 _robot,
+                                                 *(_model_ptr.get()),
                                                  "torso",
-                                                 "world");
+                                                 "l_sole");
+
     cartesian.update(q_whole);
+    std::cout<<"J:\n "<<cartesian.getA()<<std::endl;
+
     std::vector<bool> active_joint_mask = cartesian.getActiveJointsMask();
     for(unsigned int i = 0; i < active_joint_mask.size(); ++i)
         EXPECT_TRUE(active_joint_mask[i]);
 
-    yarp::sig::Matrix J = cartesian.getA();
+    Eigen::MatrixXd J = cartesian.getA();
 
-    yarp::sig::Matrix J_torso(6,_robot.torso.getNrOfDOFs());
-    for(unsigned int i = 0; i < _robot.torso.getNrOfDOFs(); ++i)
-        J_torso.setCol(i, J.getCol((int)_robot.torso.joint_numbers[i]));
-    //std::cout<<"J_torso:\n "<<J_torso.toString()<<std::cout;
+    Eigen::MatrixXd J_torso(6,3); J_torso.setZero(6,3);
+    J_torso.col(0) = J.col((int)_model_ptr->getDofIndex("WaistLat"));
+    J_torso.col(1) = J.col((int)_model_ptr->getDofIndex("WaistSag"));
+    J_torso.col(2) = J.col((int)_model_ptr->getDofIndex("WaistYaw"));
+
+    std::cout<<"J_torso:\n "<<J_torso<<std::endl;
     std::cout<<std::endl;
-    EXPECT_FALSE(J_torso == yarp::sig::Matrix(J_torso.rows(), J_torso.cols()));
+    EXPECT_FALSE(J_torso == Eigen::MatrixXd::Zero(J_torso.rows(), J_torso.cols()));
 
-    yarp::sig::Matrix J_left_leg(6,_robot.left_leg.getNrOfDOFs());
-    for(unsigned int i = 0; i < _robot.left_leg.getNrOfDOFs(); ++i)
-        J_left_leg.setCol(i, J.getCol((int)_robot.left_leg.joint_numbers[i]));
-    //std::cout<<"J_left_leg:\n "<<J_left_leg.toString()<<std::cout;
-    EXPECT_FALSE(J_left_leg == yarp::sig::Matrix(J_left_leg.rows(), J_left_leg.cols()));
+    Eigen::MatrixXd J_left_leg(6,6);
+    J_left_leg.col(0) = J.col((int)_model_ptr->getDofIndex("LHipSag"));
+    J_left_leg.col(1) = J.col((int)_model_ptr->getDofIndex("LHipLat"));
+    J_left_leg.col(2) = J.col((int)_model_ptr->getDofIndex("LHipYaw"));
+    J_left_leg.col(3) = J.col((int)_model_ptr->getDofIndex("LKneeSag"));
+    J_left_leg.col(4) = J.col((int)_model_ptr->getDofIndex("LAnkLat"));
+    J_left_leg.col(5) = J.col((int)_model_ptr->getDofIndex("LAnkSag"));
+    std::cout<<"J_left_leg:\n "<<J_left_leg<<std::endl;
+    EXPECT_FALSE(J_left_leg == Eigen::MatrixXd::Zero(J_left_leg.rows(), J_left_leg.cols()));
 
-    for(unsigned int i = 0; i < _robot.left_leg.getNrOfDOFs(); ++i)
-        active_joint_mask[_robot.left_leg.joint_numbers[i]] = false;
+    active_joint_mask[(int)_model_ptr->getDofIndex("LHipSag")] = false;
+    active_joint_mask[(int)_model_ptr->getDofIndex("LHipLat")] = false;
+    active_joint_mask[(int)_model_ptr->getDofIndex("LHipYaw")] = false;
+    active_joint_mask[(int)_model_ptr->getDofIndex("LKneeSag")] = false;
+    active_joint_mask[(int)_model_ptr->getDofIndex("LAnkLat")] = false;
+    active_joint_mask[(int)_model_ptr->getDofIndex("LAnkSag")] = false;
 
     cartesian.setActiveJointsMask(active_joint_mask);
 
     J = cartesian.getA();
 
-    yarp::sig::Matrix J_torso2(6,_robot.torso.getNrOfDOFs());
-    for(unsigned int i = 0; i < _robot.torso.getNrOfDOFs(); ++i)
-        J_torso2.setCol(i, J.getCol((int)_robot.torso.joint_numbers[i]));
-    //std::cout<<"J_torso:\n "<<J_torso2.toString()<<std::cout;
+    Eigen::MatrixXd J_torso2(6,3);
+    J_torso2.col(0) = J.col((int)_model_ptr->getDofIndex("WaistLat"));
+    J_torso2.col(1) = J.col((int)_model_ptr->getDofIndex("WaistSag"));
+    J_torso2.col(2) = J.col((int)_model_ptr->getDofIndex("WaistYaw"));
+    std::cout<<"J_torso:\n "<<J_torso2<<std::endl;
     std::cout<<std::endl;
-    EXPECT_FALSE(J_torso2 == yarp::sig::Matrix(J_torso.rows(), J_torso.cols()));
+    EXPECT_FALSE(J_torso2 == Eigen::MatrixXd::Zero(J_torso.rows(), J_torso.cols()));
     EXPECT_TRUE(J_torso == J_torso2);
 
-    for(unsigned int i = 0; i < _robot.left_leg.getNrOfDOFs(); ++i)
-        J_left_leg.setCol(i, J.getCol((int)_robot.left_leg.joint_numbers[i]));
-    //std::cout<<"J_left_leg:\n "<<J_left_leg.toString()<<std::cout;
-    EXPECT_TRUE(J_left_leg == yarp::sig::Matrix(J_left_leg.rows(), J_left_leg.cols()));
+    J_left_leg.col(0) = J.col((int)_model_ptr->getDofIndex("LHipSag"));
+    J_left_leg.col(1) = J.col((int)_model_ptr->getDofIndex("LHipLat"));
+    J_left_leg.col(2) = J.col((int)_model_ptr->getDofIndex("LHipYaw"));
+    J_left_leg.col(3) = J.col((int)_model_ptr->getDofIndex("LKneeSag"));
+    J_left_leg.col(4) = J.col((int)_model_ptr->getDofIndex("LAnkLat"));
+    J_left_leg.col(5) = J.col((int)_model_ptr->getDofIndex("LAnkSag"));
+    std::cout<<"J_left_leg:\n "<<J_left_leg<<std::endl;
+    EXPECT_TRUE(J_left_leg == Eigen::MatrixXd::Zero(J_left_leg.rows(), J_left_leg.cols()));
 
 
-
+    std::cout<<"J:\n "<<cartesian.getA()<<std::endl;
 }
 
 }

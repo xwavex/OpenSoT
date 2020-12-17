@@ -20,18 +20,17 @@
 
  #include <OpenSoT/Constraint.h>
  #include <OpenSoT/tasks/velocity/CoM.h>
- #include <yarp/sig/all.h>
- #include <idynutils/idynutils.h>
+ #include <XBotInterface/ModelInterface.h>
 
  namespace OpenSoT {
     namespace constraints {
         namespace velocity {
-            class CoMVelocity: public Constraint<yarp::sig::Matrix, yarp::sig::Vector> {
+            class CoMVelocity: public Constraint<Eigen::MatrixXd, Eigen::VectorXd> {
             public:
                 typedef boost::shared_ptr<CoMVelocity> Ptr;
             private:
-                iDynUtils& _robot;
-                yarp::sig::Vector _velocityLimits;
+                XBot::ModelInterface& _robot;
+                Eigen::VectorXd _velocityLimits;
                 double _dT;
 
                 void generatebBounds();
@@ -40,20 +39,19 @@
                 /**
                  * @brief CoMVelocity constructor
                  * @param velocityLimits a vector of 3 elements describing the maximum velocity along x,y,z of the CoM.
-                 * The CoM frame of reference is that of the support foot
                  * @param dT the time constant at which we are performing velocity control [s]
                  * @param x initial configuration of the robot when creating the constraint
                  * @param robot the robot model, with floating base link set on the support foot
                  */
-                CoMVelocity(const yarp::sig::Vector velocityLimits,
+                CoMVelocity(const Eigen::VectorXd velocityLimits,
                             const double dT,
-                            const yarp::sig::Vector& x,
-                            iDynUtils& robot);
+                            const Eigen::VectorXd& x,
+                            XBot::ModelInterface& robot);
 
-                virtual void update(const yarp::sig::Vector &x);
+                virtual void update(const Eigen::VectorXd &x);
 
-                yarp::sig::Vector getVelocityLimits();
-                void setVelocityLimits(const yarp::sig::Vector velocityLimits);
+                Eigen::VectorXd getVelocityLimits();
+                void setVelocityLimits(const Eigen::VectorXd velocityLimits);
             };
         }
     }

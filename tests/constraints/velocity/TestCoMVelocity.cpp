@@ -1,9 +1,6 @@
 #include <gtest/gtest.h>
 #include <OpenSoT/constraints/velocity/CoMVelocity.h>
-#include <idynutils/idynutils.h>
-#include <yarp/sig/Vector.h>
-#include <yarp/math/Math.h>
-#include <yarp/math/SVD.h>
+#include <XBotInterface/ModelInterface.h>
 #include <cmath>
 #define  s                1.0
 #define  dT               0.001* s
@@ -11,33 +8,44 @@
 #define  CoMVelocityLimit 0.03 * m_s
 
 using namespace OpenSoT::constraints::velocity;
-using namespace yarp::math;
 
 namespace {
 
 // The fixture for testing class CoMVelocity.
 class testCoMVelocity : public ::testing::Test {
- protected:
+public:
+
+protected:
 
   // You can remove any or all of the following functions if its body
   // is empty.
 
-  testCoMVelocity() :
-      coman("coman",
-            std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.urdf",
-            std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.srdf")
+  testCoMVelocity()
   {
+      std::string robotology_root = std::getenv("ROBOTOLOGY_ROOT");
+      //std::string relative_path = "/external/OpenSoT/tests/configs/coman/configs/config_coman_RBDL.yaml";
+      //std::string relative_path = "/external/OpenSoT/tests/configs/coman/configs/config_coman.yaml";
+      std::string relative_path = "/external/OpenSoT/tests/configs/coman/configs/config_coman_floating_base.yaml";
+
+      _path_to_cfg = robotology_root + relative_path;
+
+      _model_ptr = XBot::ModelInterface::getModel(_path_to_cfg);
+
+      if(_model_ptr)
+          std::cout<<"pointer address: "<<_model_ptr.get()<<std::endl;
+      else
+          std::cout<<"pointer is NULL "<<_model_ptr.get()<<std::endl;
     // You can do set-up work for each test here.
 
-      velocityLimits.resize(3,CoMVelocityLimit);
-      zeros.resize(coman.iDyn3_model.getNrOfDOFs(),0.0);
+      velocityLimits.resize(3);
+      velocityLimits.setZero(3);
+      velocityLimits << CoMVelocityLimit, CoMVelocityLimit, CoMVelocityLimit;
 
-      coman.iDyn3_model.setFloatingBaseLink(coman.left_leg.index);
+      zeros.setZero(_model_ptr->getJointNum());
 
-      comVelocity = new CoMVelocity(velocityLimits,
-                                    dT,
-                                    zeros,
-                                    coman);
+
+
+      comVelocity = new CoMVelocity(velocityLimits,dT,zeros,*(_model_ptr.get()));
   }
 
   virtual ~testCoMVelocity() {
@@ -64,19 +72,20 @@ class testCoMVelocity : public ::testing::Test {
 
   // Objects declared here can be used by all tests in the test case for CoMVelocity.
 
-  iDynUtils coman;
   CoMVelocity* comVelocity;
 
-  yarp::sig::Vector velocityLimits;
-  yarp::sig::Vector zeros;
-  yarp::sig::Vector q;
+  Eigen::VectorXd velocityLimits;
+  Eigen::VectorXd zeros;
+  Eigen::VectorXd q;
+  XBot::ModelInterface::Ptr _model_ptr;
+  std::string _path_to_cfg;
 };
 
 TEST_F(testCoMVelocity, sizesAreCorrect) {
-    unsigned int x_size = coman.iDyn3_model.getNrOfDOFs();
+    unsigned int x_size = _model_ptr->getJointNum();
 
-    yarp::sig::Vector bLowerBound = comVelocity->getbLowerBound();
-    yarp::sig::Vector bUpperBound = comVelocity->getbUpperBound();
+    Eigen::VectorXd bLowerBound = comVelocity->getbLowerBound();
+    Eigen::VectorXd bUpperBound = comVelocity->getbUpperBound();
 
     EXPECT_EQ(0, comVelocity->getLowerBound().size()) << "lowerBound should have size 0"
                                                         << "but has size"
@@ -115,24 +124,25 @@ TEST_F(testCoMVelocity, sizesAreCorrect) {
 // Tests that the Foo::getLowerBounds() are zero at the bounds
 TEST_F(testCoMVelocity, BoundsAreCorrect) {
 
-    yarp::sig::Matrix Aineq;
-    yarp::sig::Vector bLowerBound;
-    yarp::sig::Vector bUpperBound;
-    yarp::sig::Matrix pAineq;
+    Eigen::MatrixXd Aineq;
+    Eigen::VectorXd bLowerBound;
+    Eigen::VectorXd bUpperBound;
+    Eigen::MatrixXd pAineq;
     // a q that causes a CoM velocity which is positive and smaller than velocityLimits
-    yarp::sig::Vector qDotInPos;
+    Eigen::VectorXd qDotInPos;
     // a q that causes a CoM velocity which is negative and smaller than velocityLimits
-    yarp::sig::Vector qDotInNeg;
+    Eigen::VectorXd qDotInNeg;
     // a q that causes a CoM velocity which is positive and bigger than velocityLimits
-    yarp::sig::Vector qDotOutPos;
+    Eigen::VectorXd qDotOutPos;
     // a q that causes a CoM velocity which is positive and smaller than velocityLimits
-    yarp::sig::Vector qDotOutNeg;
+    Eigen::VectorXd qDotOutNeg;
 
-    yarp::sig::Vector q = zeros;
+    Eigen::VectorXd q = zeros;
     comVelocity->update(q);
 
     Aineq = comVelocity->getAineq();
-    pAineq = pinv(Aineq);
+//    pAineq = pinv(Aineq);
+    pAineq = Aineq.transpose()*(Aineq*Aineq.transpose()).inverse();
     bLowerBound = comVelocity->getbLowerBound();
     bUpperBound = comVelocity->getbUpperBound();
     qDotInPos = pAineq * 0.5 * velocityLimits;
@@ -140,34 +150,58 @@ TEST_F(testCoMVelocity, BoundsAreCorrect) {
     qDotOutPos = pAineq * 1.5 * velocityLimits;
     qDotOutNeg = pAineq * -1.5 * velocityLimits;
 
-    // testing bounds are correct
-    /** Aq < b => Aq - b < 0 => max(Aq-b < 0)*/
-    EXPECT_LT(findMax(Aineq*qDotInPos - velocityLimits),0.0) << "Aineq*qOk > b !!!";
-    /** -b < Aq => Aq + b > 0 => min(Aq+b > 0)*/
-    EXPECT_GT(findMin(Aineq*qDotInNeg + velocityLimits),0.0) << "Aineq*qOk < -b !!!";
-    /** Aq > b => Aq - b > 0 => min(Aq-b > 0)*/
-    EXPECT_GT(findMin(Aineq*qDotOutPos - velocityLimits),0.0) << "Aineq*qBad < b !!!";
-    /** -b > Aq => Aq + b < 0 => max(Aq+b < 0)*/
-    EXPECT_LT(findMin(Aineq*qDotOutNeg + velocityLimits),0.0) << "Aineq*qBad > -b !!!";;
+//    // testing bounds are correct
+//    /** Aq < b => Aq - b < 0 => max(Aq-b < 0)*/
+    EXPECT_LT((Aineq*qDotInPos - velocityLimits).maxCoeff(),0.0) << "Aineq*qOk > b !!!";
+//    /** -b < Aq => Aq + b > 0 => min(Aq+b > 0)*/
+    EXPECT_GT((Aineq*qDotInNeg + velocityLimits).minCoeff(),0.0) << "Aineq*qOk < -b !!!";
+//    /** Aq > b => Aq - b > 0 => min(Aq-b > 0)*/
+    EXPECT_GT((Aineq*qDotOutPos - velocityLimits).minCoeff(),0.0) << "Aineq*qBad < b !!!";
+//    /** -b > Aq => Aq + b < 0 => max(Aq+b < 0)*/
+    EXPECT_LT((Aineq*qDotOutNeg + velocityLimits).minCoeff(),0.0) << "Aineq*qBad > -b !!!";;
 
 
-    // configuration with CoM moved to the right
-    yarp::sig::Vector qRight = q;
+//    // configuration with CoM moved to the right
+    Eigen::VectorXd qRight = q;
 
-    // integrate 1s of moving right
+    _model_ptr->setJointPosition(qRight);
+    _model_ptr->update();
+
+    Eigen::Vector3d com_pose_init;
+    _model_ptr->getCOM(com_pose_init);
+    std::cout<<"CoM initial pose: "<<com_pose_init.transpose()<<std::endl;
+
+//    // integrate 1s of moving right-down-backward
     for(unsigned int i = 0; i < 1/dT; ++i) {
-        yarp::sig::Matrix JCoM;
-        coman.updateiDyn3Model(qRight,true);
-        coman.iDyn3_model.getCOMJacobian(JCoM);
-        JCoM = JCoM.removeCols(0,6);
-        JCoM = JCoM.removeRows(3,3);
-        qRight += pinv(JCoM) * dT * velocityLimits;
+        Eigen::MatrixXd JCoM;
+        _model_ptr->setJointPosition(qRight);
+        _model_ptr->update();
+
+        _model_ptr->getCOMJacobian(JCoM);
+
+//        JCoM = JCoM.removeCols(0,6);
+//        JCoM = JCoM.removeRows(3,3);
+//        qRight += pinv(JCoM) * dT * velocityLimits;
+
+
+        qRight += JCoM.transpose()*(JCoM*JCoM.transpose()).inverse() * dT * (-velocityLimits);
     }
+
+    _model_ptr->setJointPosition(qRight);
+    _model_ptr->update();
+
+    Eigen::Vector3d com_pose_final;
+    _model_ptr->getCOM(com_pose_final);
+    std::cout<<"CoM final pose: "<<com_pose_final.transpose()<<std::endl;
+
+    for(unsigned int i = 0; i < 3; ++i)
+        EXPECT_LE(com_pose_final(i), com_pose_init(i));
 
     comVelocity->update(qRight);
 
     Aineq = comVelocity->getAineq();
-    pAineq = pinv(Aineq);
+//    pAineq = pinv(Aineq);
+    pAineq = Aineq.transpose()*(Aineq*Aineq.transpose()).inverse();
     bLowerBound = comVelocity->getbLowerBound();
     bUpperBound = comVelocity->getbUpperBound();
     qDotInPos = pAineq * 0.5 * velocityLimits;
@@ -177,31 +211,52 @@ TEST_F(testCoMVelocity, BoundsAreCorrect) {
 
     // testing bounds are correct
     /** Aq < b => Aq - b < 0 => max(Aq-b < 0)*/
-    EXPECT_LT(findMax(Aineq*qDotInPos - velocityLimits),0.0) << "Aineq*qOk > b !!!";
+    EXPECT_LT((Aineq*qDotInPos - velocityLimits).maxCoeff(),0.0) << "Aineq*qOk > b !!!";
     /** -b < Aq => Aq + b > 0 => min(Aq+b > 0)*/
-    EXPECT_GT(findMin(Aineq*qDotInNeg + velocityLimits),0.0) << "Aineq*qOk < -b !!!";
+    EXPECT_GT((Aineq*qDotInNeg + velocityLimits).minCoeff(),0.0) << "Aineq*qOk < -b !!!";
     /** Aq > b => Aq - b > 0 => min(Aq-b > 0)*/
-    EXPECT_GT(findMin(Aineq*qDotOutPos - velocityLimits),0.0) << "Aineq*qBad < b !!!";
+    EXPECT_GT((Aineq*qDotOutPos - velocityLimits).minCoeff(),0.0) << "Aineq*qBad < b !!!";
     /** -b > Aq => Aq + b < 0 => max(Aq+b < 0)*/
-    EXPECT_LT(findMin(Aineq*qDotOutNeg + velocityLimits),0.0) << "Aineq*qBad > -b !!!";;
+    EXPECT_LT((Aineq*qDotOutNeg + velocityLimits).minCoeff(),0.0) << "Aineq*qBad > -b !!!";;
 
-    // configuration with CoM moved to the left
-    yarp::sig::Vector qLeft = q;
+    // configuration with CoM moved to the left-up-forward
+    Eigen::VectorXd qLeft = q;
+
+    _model_ptr->setJointPosition(qLeft);
+    _model_ptr->update();
+
+    _model_ptr->getCOM(com_pose_init);
+    std::cout<<"CoM initial pose: "<<com_pose_init.transpose()<<std::endl;
+
 
     // integrate 1s of moving left
     for(unsigned int i = 0; i < 1/dT; ++i) {
-        yarp::sig::Matrix JCoM;
-        coman.updateiDyn3Model(qLeft,true);
-        coman.iDyn3_model.getCOMJacobian(JCoM);
-        JCoM = JCoM.removeCols(0,6);
-        JCoM = JCoM.removeRows(3,3);
-        qLeft -= pinv(JCoM) * dT * velocityLimits;
+        Eigen::MatrixXd JCoM;
+
+        _model_ptr->setJointPosition(qLeft);
+        _model_ptr->update();
+
+        _model_ptr->getCOMJacobian(JCoM);
+
+
+        qLeft += JCoM.transpose()*(JCoM*JCoM.transpose()).inverse() * dT * velocityLimits;
+
     }
+
+    _model_ptr->setJointPosition(qLeft);
+    _model_ptr->update();
+
+    _model_ptr->getCOM(com_pose_final);
+    std::cout<<"CoM final pose: "<<com_pose_final.transpose()<<std::endl;
+
+    for(unsigned int i = 0; i < 3; ++i)
+        EXPECT_LE(com_pose_init(i), com_pose_final(i));
 
     comVelocity->update(qLeft);
 
     Aineq = comVelocity->getAineq();
-    pAineq = pinv(Aineq);
+//////    pAineq = pinv(Aineq);
+    pAineq = Aineq.transpose()*(Aineq*Aineq.transpose()).inverse();
     bLowerBound = comVelocity->getbLowerBound();
     bUpperBound = comVelocity->getbUpperBound();
     qDotInPos = pAineq * 0.5 * velocityLimits;
@@ -211,13 +266,13 @@ TEST_F(testCoMVelocity, BoundsAreCorrect) {
 
     // testing bounds are correct
     /** Aq < b => Aq - b < 0 => max(Aq-b < 0)*/
-    EXPECT_LT(findMax(Aineq*qDotInPos - velocityLimits),0.0) << "Aineq*qOk > b !!!";
+    EXPECT_LT((Aineq*qDotInPos - velocityLimits).maxCoeff(),0.0) << "Aineq*qOk > b !!!";
     /** -b < Aq => Aq + b > 0 => min(Aq+b > 0)*/
-    EXPECT_GT(findMin(Aineq*qDotInNeg + velocityLimits),0.0) << "Aineq*qOk < -b !!!";
+    EXPECT_GT((Aineq*qDotInNeg + velocityLimits).minCoeff(),0.0) << "Aineq*qOk < -b !!!";
     /** Aq > b => Aq - b > 0 => min(Aq-b > 0)*/
-    EXPECT_GT(findMin(Aineq*qDotOutPos - velocityLimits),0.0) << "Aineq*qBad < b !!!";
+    EXPECT_GT((Aineq*qDotOutPos - velocityLimits).minCoeff(),0.0) << "Aineq*qBad < b !!!";
     /** -b > Aq => Aq + b < 0 => max(Aq+b < 0)*/
-    EXPECT_LT(findMin(Aineq*qDotOutNeg + velocityLimits),0.0) << "Aineq*qBad > -b !!!";;
+    EXPECT_LT((Aineq*qDotOutNeg + velocityLimits).minCoeff(),0.0) << "Aineq*qBad > -b !!!";;
 
 }
 

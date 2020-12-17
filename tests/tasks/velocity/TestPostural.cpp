@@ -1,10 +1,8 @@
-#include <idynutils/tests_utils.h>
 #include <gtest/gtest.h>
 #include <OpenSoT/tasks/velocity/Postural.h>
 #include <OpenSoT/constraints/velocity/JointLimits.h>
-#include <yarp/math/Math.h>
+#include <XBotInterface/ModelInterface.h>
 
-using namespace yarp::math;
 
 namespace {
 
@@ -31,19 +29,38 @@ protected:
 
 };
 
+void initializeIfNeeded()
+{
+    static bool is_initialized = false;
+
+    if(!is_initialized) {
+        time_t seed = time(NULL);
+        seed48((unsigned short*)(&seed));
+        srand((unsigned int)(seed));
+
+        is_initialized = true;
+    }
+
+}
+
+double getRandomAngle()
+{
+    initializeIfNeeded();
+    return drand48()*2.0*M_PI-M_PI;
+}
+
 TEST_F(testPosturalTask, testPosturalTask_)
 {
-    yarp::sig::Vector q(6, 0.0);
+    Eigen::VectorXd q(6); q.setZero();
     for(unsigned int i = 0; i < q.size(); ++i)
-        q[i] = tests_utils::getRandomAngle();
+        q[i] = getRandomAngle();
 
-    yarp::sig::Vector q_ref(q.size(), 0.0);
+    Eigen::VectorXd q_ref(q.size()); q_ref.setZero();
 
     OpenSoT::tasks::velocity::Postural postural(q);
-
-    EXPECT_TRUE(postural.getA() == yarp::sig::Matrix(q.size(), q.size()).eye());
-    EXPECT_TRUE(postural.getWeight() == yarp::sig::Matrix(q.size(), q.size()).eye());
-
+    std::cout<<"Postural Task Inited"<<std::endl;
+    EXPECT_TRUE(postural.getA() == Eigen::MatrixXd::Identity(q.size(), q.size()));
+    EXPECT_TRUE(postural.getWeight() == Eigen::MatrixXd::Identity(q.size(), q.size()));
     EXPECT_TRUE(postural.getConstraints().size() == 0);
 
     double K = 0.1;
@@ -52,53 +69,61 @@ TEST_F(testPosturalTask, testPosturalTask_)
 
     postural.setReference(q_ref);
     postural.update(q);
-    EXPECT_TRUE(postural.getb() == (q_ref-q));
+    EXPECT_TRUE(postural.getb() == postural.getLambda()*(q_ref-q));
 
     for(unsigned int i = 0; i < 100; ++i)
     {
         postural.update(q);
-        q += postural.getLambda()*postural.getb();
+        Eigen::VectorXd qq = postural.getb();
+        q += qq;
     }
 
     for(unsigned int i = 0; i < q.size(); ++i)
         EXPECT_NEAR(q[i], q_ref[i], 1E-3);
 }
 
+std::string robotology_root = std::getenv("ROBOTOLOGY_ROOT");
+std::string relative_path = "/external/OpenSoT/tests/configs/coman/configs/config_coman_RBDL.yaml";
+std::string _path_to_cfg = robotology_root + relative_path;
+
 TEST_F(testPosturalTask, testPosturalTaskWithJointLimits_)
 {
-    iDynUtils idynutils("coman",
-                        std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.urdf",
-                        std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.srdf");
-    using namespace OpenSoT::tasks::velocity;
-    using namespace OpenSoT::constraints::velocity;
+    XBot::ModelInterface::Ptr _model_ptr = XBot::ModelInterface::getModel(_path_to_cfg);
+    std::cout<<"# JOINTS: "<<_model_ptr->getJointNum()<<std::endl;
 
-    yarp::sig::Vector q(idynutils.iDyn3_model.getNrOfDOFs(), 0.0);
-    yarp::sig::Vector q_next(q);
+    Eigen::VectorXd q(_model_ptr->getJointNum()); q.setZero(q.size());
+    Eigen::VectorXd q_next = q;
 
     for(unsigned int i = 0; i < q.size(); ++i) {
-        q[i] = tests_utils::getRandomAngle();
-        q_next[i] = tests_utils::getRandomAngle();
+        q[i] = getRandomAngle();
+        q_next[i] = getRandomAngle();
         assert((q[i]!=q_next[i]));
     }
-    idynutils.updateiDyn3Model(q);
+    _model_ptr->setJointPosition(q);
+    _model_ptr->update();
 
-    Postural::TaskPtr postural( new Postural(q) );
-    Postural::ConstraintPtr bound(
-        new JointLimits(q,
-                        idynutils.iDyn3_model.getJointBoundMax(),
-                        idynutils.iDyn3_model.getJointBoundMin())
+
+    Eigen::VectorXd qmin, qmax;
+    _model_ptr->getJointLimits(qmin,qmax);
+
+    OpenSoT::tasks::velocity::Postural::TaskPtr postural( new OpenSoT::tasks::velocity::Postural(q) );
+    OpenSoT::tasks::velocity::Postural::ConstraintPtr bound(
+        new OpenSoT::constraints::velocity::JointLimits(q,
+                        qmax,
+                        qmin)
     );
 
     postural->getConstraints().push_back( bound );
 
-    yarp::sig::Vector old_b = postural->getb();
-    yarp::sig::Vector old_LowerBound = bound->getLowerBound();
-    yarp::sig::Vector old_UpperBound = bound->getUpperBound();
-    idynutils.updateiDyn3Model(q_next);
+    Eigen::VectorXd old_b = postural->getb();
+    Eigen::VectorXd old_LowerBound = bound->getLowerBound();
+    Eigen::VectorXd old_UpperBound = bound->getUpperBound();
+    _model_ptr->setJointPosition(q_next);
+    _model_ptr->update();
     postural->update(q_next);
-    yarp::sig::Vector new_b = postural->getb();
-    yarp::sig::Vector new_LowerBound = bound->getLowerBound();
-    yarp::sig::Vector new_UpperBound = bound->getUpperBound();
+    Eigen::VectorXd new_b = postural->getb();
+    Eigen::VectorXd new_LowerBound = bound->getLowerBound();
+    Eigen::VectorXd new_UpperBound = bound->getUpperBound();
 
     EXPECT_FALSE(old_b == new_b);
     EXPECT_FALSE(old_LowerBound == new_LowerBound);

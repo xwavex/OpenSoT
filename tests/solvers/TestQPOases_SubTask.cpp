@@ -1,41 +1,36 @@
-#include <idynutils/idynutils.h>
-#include <idynutils/tests_utils.h>
-#include <idynutils/comanutils.h>
 #include <gtest/gtest.h>
 #include <kdl/frames.hpp>
 #include <kdl/frames_io.hpp>
 #include <OpenSoT/SubTask.h>
 #include <OpenSoT/constraints/Aggregated.h>
-#include <OpenSoT/constraints/velocity/all.h>
-#include <OpenSoT/solvers/QPOases.h>
+#include <OpenSoT/solvers/iHQP.h>
 #include <OpenSoT/tasks/Aggregated.h>
-#include <OpenSoT/tasks/velocity/all.h>
 #include <OpenSoT/utils/AutoStack.h>
 #include <OpenSoT/utils/DefaultHumanoidStack.h>
-#include <yarp/math/Math.h>
-#include <yarp/sig/all.h>
 #include <fstream>
+#include <XBotInterface/ModelInterface.h>
 
-
-using namespace yarp::math;
 
 #define GREEN "\033[0;32m"
 #define DEFAULT "\033[0m"
+
+std::string robotology_root = std::getenv("ROBOTOLOGY_ROOT");
+std::string relative_path = "/external/OpenSoT/tests/configs/coman/configs/config_coman_RBDL.yaml";
+std::string _path_to_cfg = robotology_root + relative_path;
 
 namespace {
 
 class testQPOases_SubTask: public ::testing::Test
 {
 protected:
-    std::ofstream _log;
 
     testQPOases_SubTask()
     {
-        _log.open("testQPOases_SubTask.m");
+
     }
 
     virtual ~testQPOases_SubTask() {
-        _log.close();
+
     }
 
     virtual void SetUp() {
@@ -47,37 +42,48 @@ protected:
     }
 };
 
-yarp::sig::Vector getGoodInitialPosition(iDynUtils& idynutils) {
-    yarp::sig::Vector q(idynutils.iDyn3_model.getNrOfDOFs(), 0.0);
-    yarp::sig::Vector leg(idynutils.left_leg.getNrOfDOFs(), 0.0);
-    leg[0] = -25.0 * M_PI/180.0;
-    leg[3] =  50.0 * M_PI/180.0;
-    leg[5] = -25.0 * M_PI/180.0;
-    idynutils.fromRobotToIDyn(leg, q, idynutils.left_leg);
-    idynutils.fromRobotToIDyn(leg, q, idynutils.right_leg);
-    yarp::sig::Vector arm(idynutils.left_arm.getNrOfDOFs(), 0.0);
-    arm[0] = 20.0 * M_PI/180.0;
-    arm[1] = 10.0 * M_PI/180.0;
-    arm[3] = -80.0 * M_PI/180.0;
-    idynutils.fromRobotToIDyn(arm, q, idynutils.left_arm);
-    arm[1] = -arm[1];
-    idynutils.fromRobotToIDyn(arm, q, idynutils.right_arm);
-    return q;
+Eigen::VectorXd getGoodInitialPosition(XBot::ModelInterface::Ptr _model_ptr) {
+    Eigen::VectorXd _q(_model_ptr->getJointNum());
+    _q.setZero(_q.size());
+    _q[_model_ptr->getDofIndex("RHipSag")] = -25.0*M_PI/180.0;
+    _q[_model_ptr->getDofIndex("RKneeSag")] = 50.0*M_PI/180.0;
+    _q[_model_ptr->getDofIndex("RAnkSag")] = -25.0*M_PI/180.0;
+
+    _q[_model_ptr->getDofIndex("LHipSag")] = -25.0*M_PI/180.0;
+    _q[_model_ptr->getDofIndex("LKneeSag")] = 50.0*M_PI/180.0;
+    _q[_model_ptr->getDofIndex("LAnkSag")] = -25.0*M_PI/180.0;
+
+    _q[_model_ptr->getDofIndex("LShSag")] =  20.0*M_PI/180.0;
+    _q[_model_ptr->getDofIndex("LShLat")] = 10.0*M_PI/180.0;
+    _q[_model_ptr->getDofIndex("LElbj")] = -80.0*M_PI/180.0;
+
+    _q[_model_ptr->getDofIndex("RShSag")] =  20.0*M_PI/180.0;
+    _q[_model_ptr->getDofIndex("RShLat")] = -10.0*M_PI/180.0;
+    _q[_model_ptr->getDofIndex("RElbj")] = -80.0*M_PI/180.0;
+
+    return _q;
 }
+
 
 TEST_F(testQPOases_SubTask, testSolveUsingSubTasks)
 {
-    iDynUtils model("coman",
-                    std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.urdf",
-                    std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.srdf");
-    yarp::sig::Vector q, dq;
-    q = model.iDyn3_model.getAng();
-    OpenSoT::DefaultHumanoidStack DHS(model, 1e-3, q);
+    XBot::ModelInterface::Ptr _model_ptr;
+    _model_ptr = XBot::ModelInterface::getModel(_path_to_cfg);
+
+    Eigen::VectorXd q = getGoodInitialPosition(_model_ptr);
+    _model_ptr->setJointPosition(q);
+    _model_ptr->update();
+
+    OpenSoT::DefaultHumanoidStack DHS(*_model_ptr, 1e-3,
+                                      "Waist",
+                                      "l_wrist", "r_wrist",
+                                      "l_sole", "r_sole",
+                                      1.,q);
 
     OpenSoT::AutoStack::Ptr subTaskTest = (DHS.leftArm_Orientation / DHS.postural)
                                             << DHS.jointLimits << DHS.velocityLimits;
-    OpenSoT::solvers::QPOases_sot::Ptr solver(
-        new OpenSoT::solvers::QPOases_sot(subTaskTest->getStack(), subTaskTest->getBounds()));
+    OpenSoT::solvers::iHQP::Ptr solver(
+        new OpenSoT::solvers::iHQP(subTaskTest->getStack(), subTaskTest->getBounds()));
     ASSERT_EQ(DHS.leftArm_Orientation->getTaskSize(),3);
     ASSERT_EQ(DHS.leftArm_Orientation->getA().rows(),3);
     ASSERT_EQ(DHS.leftArm_Orientation->getA().cols(),q.size());
@@ -96,71 +102,91 @@ TEST_F(testQPOases_SubTask, testSolveUsingSubTasks)
     ASSERT_EQ(task->getTaskSize(),3);
 
     for(unsigned int i = 0; i < 1000; ++i) {
-        yarp::sig::Matrix H = task->getA().transposed() * task->getWeight() * task->getA();
-        yarp::sig::Vector g = -1.0 * task->getLambda() * task->getA().transposed() * task->getWeight() * task->getb();
+        Eigen::MatrixXd H = task->getA().transpose() * task->getWeight() * task->getA();
+        Eigen::VectorXd g = -1.0 * task->getLambda() * task->getA().transpose() * task->getWeight() * task->getb();
 
         ASSERT_EQ(H.rows(),q.size());
         ASSERT_EQ(H.cols(),q.size());
         ASSERT_EQ(g.size(),q.size());
     }
 
+    Eigen::VectorXd dq(q.size());
+    dq.setZero(dq.size());
     ASSERT_TRUE(solver->solve(dq));
 
-    q += .01;
-    model.updateiDyn3Model(q,true);
+    q += dq;
+    _model_ptr->setJointPosition(q);
+    _model_ptr->update();
     subTaskTest->update(q);
     ASSERT_TRUE(solver->solve(dq));
 }
 
 TEST_F(testQPOases_SubTask, testSolveUsingSubTasksAndAggregated)
 {
-    iDynUtils model("coman",
-                    std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.urdf",
-                    std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.srdf");
-    yarp::sig::Vector q, dq;
-    q = model.iDyn3_model.getAng();
-    OpenSoT::DefaultHumanoidStack DHS(model, 1e-3, q);
+    XBot::ModelInterface::Ptr _model_ptr;
+    _model_ptr = XBot::ModelInterface::getModel(_path_to_cfg);
+
+    Eigen::VectorXd q = getGoodInitialPosition(_model_ptr);
+    _model_ptr->setJointPosition(q);
+    _model_ptr->update();
+
+    OpenSoT::DefaultHumanoidStack DHS(*_model_ptr, 1e-3,
+                                      "Waist",
+                                      "l_wrist", "r_wrist",
+                                      "l_sole", "r_sole",
+                                      1.,q);
+
+    Eigen::VectorXd dq(q.size());
 
     OpenSoT::AutoStack::Ptr subTaskTest = ((DHS.leftArm_Orientation + DHS.rightArm) / DHS.postural)
                                             << DHS.jointLimits << DHS.velocityLimits;
-    OpenSoT::solvers::QPOases_sot::Ptr solver(
-        new OpenSoT::solvers::QPOases_sot(subTaskTest->getStack(), subTaskTest->getBounds()));
+    OpenSoT::solvers::iHQP::Ptr solver(
+        new OpenSoT::solvers::iHQP(subTaskTest->getStack(), subTaskTest->getBounds()));
+
 
     ASSERT_TRUE(solver->solve(dq));
 
-    q += .01;
-    model.updateiDyn3Model(q,true);
+    q += dq;
+    _model_ptr->setJointPosition(q);
+    _model_ptr->update();
     subTaskTest->update(q);
     ASSERT_TRUE(solver->solve(dq));
 }
 
 TEST_F(testQPOases_SubTask, testSolveCartesianThroughSubTasksAndAggregated)
 {
-    iDynUtils model("coman",
-                    std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.urdf",
-                    std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.srdf");
-    yarp::sig::Vector q, dq;
-    q = getGoodInitialPosition(model);
-    model.updateiDyn3Model(q,true);
-    OpenSoT::DefaultHumanoidStack DHS(model, 1e-3, q);
+    XBot::ModelInterface::Ptr _model_ptr;
+    _model_ptr = XBot::ModelInterface::getModel(_path_to_cfg);
+
+    Eigen::VectorXd q = getGoodInitialPosition(_model_ptr);
+    _model_ptr->setJointPosition(q);
+    _model_ptr->update();
+    OpenSoT::DefaultHumanoidStack DHS(*_model_ptr, 1e-3,
+                                      "Waist",
+                                      "l_wrist", "r_wrist",
+                                      "l_sole", "r_sole",
+                                      1.,q);
 
     OpenSoT::AutoStack::Ptr subTaskTest = ((DHS.leftArm_Position + DHS.leftArm_Orientation) / DHS.postural)
                                             << DHS.jointLimits << DHS.velocityLimits;
-    OpenSoT::solvers::QPOases_sot::Ptr solver(
-        new OpenSoT::solvers::QPOases_sot(subTaskTest->getStack(), subTaskTest->getBounds()));
-    yarp::sig::Matrix actualPose = DHS.leftArm->getActualPose();
-    yarp::sig::Matrix desiredPose = actualPose; desiredPose(0,3) = actualPose(0,3)+0.1;
+    OpenSoT::solvers::iHQP::Ptr solver(
+        new OpenSoT::solvers::iHQP(subTaskTest->getStack(), subTaskTest->getBounds()));
+    Eigen::MatrixXd actualPose = DHS.leftArm->getActualPose();
+    Eigen::MatrixXd desiredPose = actualPose;
+    desiredPose(0,3) = actualPose(0,3)+0.1;
 
     unsigned int iterations = 10000;
-    while(yarp::math::norm(DHS.leftArm->getb()) > 1e-4 && iterations > 0)
+    while(sqrt(DHS.leftArm->getb().squaredNorm()) > 1e-4 && iterations > 0)
     {
-        model.updateiDyn3Model(q, true);
+        _model_ptr->setJointPosition(q);
+        _model_ptr->update();
         subTaskTest->update(q);
+        Eigen::VectorXd dq(q.size()); dq.setZero(dq.size());
         ASSERT_TRUE(solver->solve(dq));
         q += dq;
     }
 
-    ASSERT_TRUE(yarp::math::norm(DHS.leftArm->getb()) <= 1e-4);
+    ASSERT_TRUE(sqrt(DHS.leftArm->getb().squaredNorm()) <= 1e-4);
 }
 
 }

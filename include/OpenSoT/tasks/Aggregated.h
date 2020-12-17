@@ -19,11 +19,12 @@
 #define __TASKS_AGGREGATED_H__
 
 #include <OpenSoT/Task.h>
-
-#include <yarp/sig/all.h>
+#include <Eigen/Dense>
 #include <boost/shared_ptr.hpp>
 #include <list>
+#include <OpenSoT/utils/Piler.h>
 
+using namespace OpenSoT::utils;
 
  namespace OpenSoT {
     namespace tasks {
@@ -38,15 +39,19 @@
          * it is comprised. Take a look at getConstraints(), getAggregatedConstraints(), getOwnConstraints() for more infos.
          *
          */
-        class Aggregated: public Task<yarp::sig::Matrix, yarp::sig::Vector> {
+        class Aggregated: public Task<Eigen::MatrixXd, Eigen::VectorXd> {
         public:
             typedef boost::shared_ptr<Aggregated> Ptr;
+            typedef MatrixPiler VectorPiler;
         protected:
 
             std::list< TaskPtr > _tasks;
 
             std::list< ConstraintPtr > _ownConstraints;
             std::list< ConstraintPtr > _aggregatedConstraints;
+
+            MatrixPiler _tmpA;
+            VectorPiler _tmpb;
 
             unsigned int _aggregationPolicy;
 
@@ -95,6 +100,8 @@
 
             static const std::string concatenateTaskIds(const std::list<TaskPtr> tasks);
 
+            virtual void _log(XBot::MatLogger::Ptr logger);
+
         public:
             /**
              * @brief Aggregated
@@ -124,11 +131,11 @@
              *          update(q) on all tasks he is composed of
              */
             Aggregated(const std::list< TaskPtr > tasks,
-                       const yarp::sig::Vector &q);
+                       const Eigen::VectorXd &q);
 
             ~Aggregated();
 
-            void _update(const yarp::sig::Vector &x);
+            void _update(const Eigen::VectorXd &x);
 
 
             /**
@@ -172,6 +179,16 @@
             const std::list< ConstraintPtr >& getAggregatedConstraints() { return _aggregatedConstraints; }
 
             const std::list< TaskPtr >& getTaskList() { return _tasks; }
+
+            /**
+             * @brief setLambda set the lambda to ALL the aggregated tasks to the same value lambda.
+             * The lambda associated to the Aggregate and the lambda associated to the tasks are different if a
+             * Aggregated.setLambda(lambda) is not called.
+             * @param lambda a value for all the tasks in the aggregate
+             */
+            void setLambda(double lambda);
+              
+            static bool isAggregated(OpenSoT::Task<Eigen::MatrixXd, Eigen::VectorXd>::TaskPtr task);
         };
 
     }

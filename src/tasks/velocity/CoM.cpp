@@ -16,21 +16,24 @@
 */
 
 #include <OpenSoT/tasks/velocity/CoM.h>
-#include <yarp/math/Math.h>
-#include <idynutils/cartesian_utils.h>
+#include <OpenSoT/utils/cartesian_utils.h>
 #include <exception>
 #include <cmath>
-#include <iCub/iDynTree/yarp_kdl.h>
+
 
 using namespace OpenSoT::tasks::velocity;
-using namespace yarp::math;
 
-CoM::CoM(   const yarp::sig::Vector& x,
-            iDynUtils &robot) :
-    Task("CoM", x.size()), _robot(robot),
-    _desiredPosition(3,0.0), _actualPosition(3,0.0),
-    positionError(3, 0.0), _desiredVelocity(3,0.0)
+
+#define LAMBDA_THS 1E-12
+
+CoM::CoM(   const Eigen::VectorXd& x,
+            XBot::ModelInterface &robot) :
+    Task("CoM", x.size()), _robot(robot)
 {
+    _desiredPosition.setZero(3);
+    _actualPosition.setZero(3);
+    _positionError.setZero(3);
+    _desiredVelocity.setZero(3);
 
     /* first update. Setting desired pose equal to the actual pose */
     this->_update(x);
@@ -38,11 +41,11 @@ CoM::CoM(   const yarp::sig::Vector& x,
 
     /* initializing to zero error */
     _desiredPosition = _actualPosition;
-    _b.zero();
-    positionError = _b;
+    _b.setZero(3);
+    _positionError = _b;
 
     _W.resize(3,3);
-    _W.eye();
+    _W.setIdentity(3,3);
 
     _hessianType = HST_SEMIDEF;
 }
@@ -51,56 +54,73 @@ CoM::~CoM()
 {
 }
 
-void CoM::_update(const yarp::sig::Vector &x)
+void CoM::_update(const Eigen::VectorXd &x)
 {
 
     /************************* COMPUTING TASK *****************************/
 
-    _actualPosition = _robot.iDyn3_model.getCOM();
+    _robot.getCOM(_actualPosition);
 
-    assert(_robot.iDyn3_model.getCOMJacobian(_A));
-    _A = _A.removeRows(3,3);    // remove orientation
-    _A = _A.removeCols(0,6);    // remove floating base
+    _robot.getCOMJacobian(_A);
 
     this->update_b();
 
-    this->_desiredVelocity.zero();
+    this->_desiredVelocity.setZero(3);
 
     /**********************************************************************/
 }
 
-void CoM::setReference(const yarp::sig::Vector& desiredPosition)
+void CoM::setReference(const KDL::Vector& desiredPosition,
+                  const KDL::Vector& desiredVelocity)
 {
-    assert(desiredPosition.size() == 3);
+    _desiredPosition(0) = desiredPosition.x();
+    _desiredPosition(1) = desiredPosition.y();
+    _desiredPosition(2) = desiredPosition.z();
 
-	_desiredPosition = desiredPosition;
-    _desiredVelocity.zero();
+    _desiredVelocity(0) = desiredVelocity.x();
+    _desiredVelocity(1) = desiredVelocity.y();
+    _desiredVelocity(2) = desiredVelocity.z();
+
     this->update_b();
 }
 
-void OpenSoT::tasks::velocity::CoM::setReference(const yarp::sig::Vector &desiredPosition,
-                                                 const yarp::sig::Vector &desiredVelocity)
+void CoM::setReference(const KDL::Vector& desiredPosition)
 {
-    assert(desiredPosition.size() == 3);
-    assert(desiredVelocity.size() == 3);
+    _desiredPosition(0) = desiredPosition.x();
+    _desiredPosition(1) = desiredPosition.y();
+    _desiredPosition(2) = desiredPosition.z();
 
+    _desiredVelocity.setZero(3);
+    this->update_b();
+}
+
+void CoM::setReference(const Eigen::Vector3d& desiredPosition)
+{
+	_desiredPosition = desiredPosition;
+    _desiredVelocity.setZero(3);
+    this->update_b();
+}
+
+void OpenSoT::tasks::velocity::CoM::setReference(const Eigen::Vector3d &desiredPosition,
+                                                 const Eigen::Vector3d &desiredVelocity)
+{
     _desiredPosition = desiredPosition;
     _desiredVelocity = desiredVelocity;
     this->update_b();
 }
 
-yarp::sig::Vector CoM::getReference() const
+Eigen::VectorXd CoM::getReference() const
 {
     return _desiredPosition;
 }
 
-void OpenSoT::tasks::velocity::CoM::getReference(yarp::sig::Vector &desiredPosition, yarp::sig::Vector &desiredVelocity) const
+void OpenSoT::tasks::velocity::CoM::getReference(Eigen::Vector3d &desiredPosition, Eigen::Vector3d &desiredVelocity) const
 {
     desiredPosition = _desiredPosition;
     desiredVelocity = _desiredVelocity;
 }
 
-yarp::sig::Vector CoM::getActualPosition() const
+Eigen::Vector3d CoM::getActualPosition() const
 {
     return _actualPosition;
 }
@@ -117,12 +137,35 @@ std::string OpenSoT::tasks::velocity::CoM::getDistalLink()
 
 void CoM::update_b()
 {
-    positionError = _desiredPosition - _actualPosition;
-    _b = positionError + _desiredVelocity/_lambda;
+    _positionError = _desiredPosition - _actualPosition;
+    _b = _desiredVelocity + _lambda*_positionError;
 }
 
 void OpenSoT::tasks::velocity::CoM::setLambda(double lambda)
 {
-    this->_lambda = lambda;
-    this->update_b();
+    if(lambda >= 0.0){
+        this->_lambda = lambda;
+        this->update_b();
+    }
+}
+
+Eigen::Vector3d OpenSoT::tasks::velocity::CoM::getError()
+{
+    return _positionError;
+}
+
+OpenSoT::tasks::velocity::CoM::Ptr OpenSoT::tasks::velocity::CoM::asCoM(OpenSoT::Task<Eigen::MatrixXd, Eigen::VectorXd>::TaskPtr task)
+{
+    return boost::dynamic_pointer_cast<OpenSoT::tasks::velocity::CoM>(task);
+}
+
+
+bool OpenSoT::tasks::velocity::CoM::isCoM(OpenSoT::Task<Eigen::MatrixXd, Eigen::VectorXd>::TaskPtr task)
+{
+    return (bool)boost::dynamic_pointer_cast<OpenSoT::tasks::velocity::CoM>(task);
+}
+
+void OpenSoT::tasks::velocity::CoM::_log(XBot::MatLogger::Ptr logger)
+{
+    logger->add(getTaskID() + "_position_err", _positionError);
 }

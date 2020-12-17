@@ -20,7 +20,11 @@
 
 #include <OpenSoT/tasks/Aggregated.h>
 #include <OpenSoT/constraints/Aggregated.h>
-#include <OpenSoT/solvers/QPOases.h>
+#include <OpenSoT/solvers/iHQP.h>
+#include <OpenSoT/tasks/velocity/Cartesian.h>
+#include <OpenSoT/tasks/velocity/CoM.h>
+#include <XBotInterface/Logger.hpp>
+#include <OpenSoT/SubTask.h>
 
 /**
  * @example example_autostack.cpp
@@ -45,28 +49,99 @@ namespace OpenSoT {
         public:
         typedef boost::shared_ptr<OpenSoT::AutoStack> Ptr;
         private:
-        OpenSoT::solvers::QPOases_sot::Stack _stack;
-        std::list<OpenSoT::constraints::Aggregated::ConstraintPtr> _bounds;
-        public:
-            AutoStack(OpenSoT::solvers::QPOases_sot::Stack stack);
+        OpenSoT::solvers::iHQP::Stack _stack;
 
-            AutoStack(OpenSoT::solvers::QPOases_sot::Stack stack,
+        OpenSoT::constraints::Aggregated::Ptr _boundsAggregated;
+
+        std::vector<OpenSoT::solvers::iHQP::TaskPtr> flattenTask(
+                OpenSoT::solvers::iHQP::TaskPtr task);
+
+        protected:
+            AutoStack(const double x_size);
+
+        public:
+            AutoStack(OpenSoT::tasks::Aggregated::TaskPtr task);
+
+            AutoStack(OpenSoT::solvers::iHQP::Stack stack);
+
+            AutoStack(OpenSoT::solvers::iHQP::Stack stack,
                       std::list<OpenSoT::constraints::Aggregated::ConstraintPtr> bounds);
 
-            /*AutoStack(OpenSoT::solvers::QPOases_sot::Stack stack,
+            /*AutoStack(OpenSoT::solvers::iHQP::Stack stack,
                       OpenSoT::constraints::Aggregated::ConstraintPtr bound);*/
 
-            void update(const yarp::sig::Vector & state);
+            void update(const Eigen::VectorXd & state);
 
-            OpenSoT::solvers::QPOases_sot::Stack& getStack();
+            void log(XBot::MatLogger::Ptr logger);
+
+            bool checkConsistency();
+
+            OpenSoT::solvers::iHQP::Stack& getStack();
 
             std::list<OpenSoT::constraints::Aggregated::ConstraintPtr>& getBoundsList();
 
-            OpenSoT::constraints::Aggregated::ConstraintPtr getBounds(  const unsigned int aggregationPolicy =
-                                                                        OpenSoT::constraints::Aggregated::EQUALITIES_TO_INEQUALITIES |
-                                                                        OpenSoT::constraints::Aggregated::UNILATERAL_TO_BILATERAL);
+            /**
+             * @brief setBoundsAggregationPolicy changes the aggregation policy of the bounds as
+             * returned by the getBounds() function. Notice calling this will create a new bounds
+             * object (an instance of OpenSoT::constraints::Aggregated), so that the update()
+             * function of this AutoStack will then update only the new instance. If you have
+             * another instance of those Bounds lying around, you should then manually update that
+             * before using it.
+             * @param aggregationPolicy the new aggregation policy for this AutoStack's bounds
+             */
+            void setBoundsAggregationPolicy(const unsigned int aggregationPolicy =
+                OpenSoT::constraints::Aggregated::EQUALITIES_TO_INEQUALITIES |
+                OpenSoT::constraints::Aggregated::UNILATERAL_TO_BILATERAL);
+
+            OpenSoT::constraints::Aggregated::ConstraintPtr getBounds();
+
+            OpenSoT::solvers::iHQP::TaskPtr getOperationalSpaceTask(const std::string& base_link, const std::string& distal_link);
+            OpenSoT::solvers::iHQP::TaskPtr getOperationalSpaceTask(const std::string& task_id);
     };    
-}
+
+/**
+ * @brief operator * takes a weight matrix and a task, apply the weight to the task
+ * NOTE: the weight is set taking into account the one already set:
+ *  Wfinal = W*Woriginal
+ * @param W weight matrix
+ * @param task a task
+ * @return a task ptr
+ */
+OpenSoT::tasks::Aggregated::TaskPtr operator*(const Eigen::MatrixXd& W,
+                                              OpenSoT::tasks::Aggregated::TaskPtr task);
+
+/**
+ * @brief operator * takes a weight and a task, apply the weight to the task
+ * NOTE: the weight is set taking into account the one already set:
+ *  Wfinal = w*Woriginal
+ * @param w a weight
+ * @param task a task
+ * @return  a task ptr
+ */
+OpenSoT::tasks::Aggregated::TaskPtr operator*(const double w,
+                                              OpenSoT::tasks::Aggregated::TaskPtr task);
+
+/**
+ * @brief operator * a weight and a task, apply the weight to the task
+ * NOTE: the weight is set the same for all the tasks in the aggregate, taking into account the originals
+ *  Wfinal = w*Woriginal
+ * @param w a weight
+ * @param task a task
+ * @return a task ptr
+ */
+OpenSoT::tasks::Aggregated::Ptr operator*(const double w,
+                                          OpenSoT::tasks::Aggregated::Ptr task);
+
+/**
+ * @brief operator % takes a task and a list of indices, generates a subtask
+ * @param task a task pointer
+ * @param rowIndices list of indices
+ * @return a pointer to a SubTask generated from task with the given indices
+ * TODO: this will not work with tasks under the folder torque, in that case another solution
+ * should be found
+ */
+OpenSoT::SubTask::Ptr operator%(const OpenSoT::tasks::Aggregated::TaskPtr task,
+                                const std::list<unsigned int>& rowIndices);
 
 /**
  * @brief operator + takes two tasks, generates a new Aggregated task
@@ -209,5 +284,5 @@ OpenSoT::tasks::Aggregated::Ptr operator<<( OpenSoT::tasks::Aggregated::Ptr task
  */
 OpenSoT::AutoStack::Ptr operator<<( OpenSoT::AutoStack::Ptr stack1,
                                     const OpenSoT::constraints::Aggregated::ConstraintPtr bound);
-
+}
 #endif

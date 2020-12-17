@@ -21,7 +21,6 @@
 #include <OpenSoT/constraints/BilateralConstraint.h>
 #include <OpenSoT/Task.h>
 
-#include <yarp/sig/all.h>
 #include <list>
 
 
@@ -29,33 +28,46 @@
     namespace constraints {
 
         /**
-         * @brief The TaskToConstraint class transforms a task into an equality constraint:
-         *        \f$ A*x = b \f$
+         * @brief The TaskToConstraint class transforms a task into an inequality constraint
+         * which bounds the error in between err_lb and err_ub
+         *
          * BilateralConstraint:
-         *   \f$ b <= A*x <= b \f$
+         *   \f$ b + err_lb <= A*x <= b + err_ub \f$
          */
         class TaskToConstraint: public BilateralConstraint {
         public:
-            typedef boost::shared_ptr< OpenSoT::Task<yarp::sig::Matrix, yarp::sig::Vector> > TaskPtr;
+            typedef boost::shared_ptr< OpenSoT::Task<Eigen::MatrixXd, Eigen::VectorXd> > TaskPtr;
             typedef boost::shared_ptr< OpenSoT::constraints::TaskToConstraint> Ptr;
 
         private:
+            
             TaskPtr _task;
+            
+            Eigen::VectorXd _err_lb, _err_ub;
 
         public:
 
             /**
-             * @brief TaskToConstraint creates a TaskToConstraint from a task
+             * @brief TaskToConstraint creates an equality TaskToConstraint from a task
              * Calling update on the constraint will also update the task
              * @param task
              */
             TaskToConstraint(TaskPtr task);
+            
+             /**
+             * @brief TaskToConstraint creates a TaskToConstraint from a task
+             * Calling update on the constraint will also update the task
+             * @param task
+             */
+            TaskToConstraint(TaskPtr task, 
+                             const Eigen::VectorXd& err_lb, 
+                             const Eigen::VectorXd& err_ub);
 
             /**
              * @brief update updates the adapted task and the adapter constraint
              * @param q
              */
-            void update(const yarp::sig::Vector &q);
+            void update(const Eigen::VectorXd &q);
 
         protected:
 

@@ -19,7 +19,7 @@ protected:
         _robot("coman",
                std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.urdf",
                std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.srdf"),
-        _DHS(_robot, 3e-3, _robot.zeros)
+        _DHS(_robot, 3e-3, cartesian_utils::toEigen(_robot.zeros))
     {
 
     }
@@ -81,7 +81,7 @@ TEST_F(testVelocityAllocation, testConstructorStack)
             / _DHS.postural;
         autoStack << _DHS.jointLimits;
 
-        OpenSoT::Solver<yarp::sig::Matrix, yarp::sig::Vector>::Stack stack = autoStack->getStack();
+        OpenSoT::Solver<Eigen::MatrixXd, Eigen::VectorXd>::Stack stack = autoStack->getStack();
 
 
         const double minimum_velocity = 0.1;
@@ -94,37 +94,39 @@ TEST_F(testVelocityAllocation, testConstructorStack)
 
 
         unsigned int i = 0;
-        for(OpenSoT::Task<yarp::sig::Matrix, yarp::sig::Vector>::TaskPtr task :
-            autoStack->getStack())
+        typedef std::vector<OpenSoT::Task<Eigen::MatrixXd, Eigen::VectorXd>::TaskPtr >::iterator it_t;
+        for(it_t task = autoStack->getStack().begin();
+            task != autoStack->getStack().end();
+            ++task)
         {
-            ASSERT_EQ(task->getConstraints().size(),1);
+            ASSERT_EQ((*task)->getConstraints().size(),1);
             EXPECT_DOUBLE_EQ(boost::dynamic_pointer_cast<
                 OpenSoT::constraints::velocity::VelocityLimits>(
-                    task->getConstraints().front()
+                    (*task)->getConstraints().front()
                             )->getVelocityLimits(),
                 minimum_velocity+i*(maximum_velocity - minimum_velocity)/(autoStack->getStack().size()-1));
             if(i == 0)
                 EXPECT_DOUBLE_EQ(boost::dynamic_pointer_cast<
                                     OpenSoT::constraints::velocity::VelocityLimits>(
-                                        task->getConstraints().front()
+                                        (*task)->getConstraints().front()
                                                 )->getVelocityLimits(),
                                  0.1);
             else if(i == 1)
                 EXPECT_DOUBLE_EQ(boost::dynamic_pointer_cast<
                                     OpenSoT::constraints::velocity::VelocityLimits>(
-                                        task->getConstraints().front()
+                                        (*task)->getConstraints().front()
                                                 )->getVelocityLimits(),
                                  0.16666666666666666);
             else if(i == 2)
                 EXPECT_DOUBLE_EQ(boost::dynamic_pointer_cast<
                                     OpenSoT::constraints::velocity::VelocityLimits>(
-                                        task->getConstraints().front()
+                                        (*task)->getConstraints().front()
                                                 )->getVelocityLimits(),
                                  0.23333333333333334);
             else if(i == 3)
                 EXPECT_DOUBLE_EQ(boost::dynamic_pointer_cast<
                                     OpenSoT::constraints::velocity::VelocityLimits>(
-                                        task->getConstraints().front()
+                                        (*task)->getConstraints().front()
                                                 )->getVelocityLimits(),
                                  0.3);
             ++i;
@@ -133,7 +135,7 @@ TEST_F(testVelocityAllocation, testConstructorStack)
 
     // testing constructor applies velocity bounds correctly velocity bounds exist on tasks
     {
-        OpenSoT::DefaultHumanoidStack DHS(_robot, 3e-3, _robot.zeros);
+        OpenSoT::DefaultHumanoidStack DHS(_robot, 3e-3, cartesian_utils::toEigen(_robot.zeros));
 
         OpenSoT::AutoStack::Ptr autoStack =
             (DHS.leftArm + DHS.rightArm)
@@ -144,12 +146,12 @@ TEST_F(testVelocityAllocation, testConstructorStack)
 
         const double high_velocity = 0.8;
 
-        DHS.postural->getConstraints().push_back(OpenSoT::Constraint<yarp::sig::Matrix, yarp::sig::Vector>::ConstraintPtr(
+        DHS.postural->getConstraints().push_back(OpenSoT::Constraint<Eigen::MatrixXd, Eigen::VectorXd>::ConstraintPtr(
             new OpenSoT::constraints::velocity::VelocityLimits(high_velocity,
                                                                3e-3,
                                                                DHS.postural->getXSize())));
 
-        OpenSoT::Solver<yarp::sig::Matrix, yarp::sig::Vector>::Stack stack = autoStack->getStack();
+        OpenSoT::Solver<Eigen::MatrixXd, Eigen::VectorXd>::Stack stack = autoStack->getStack();
         ASSERT_EQ(autoStack->getStack()[3]->getConstraints().size(),1);
         ASSERT_TRUE((bool)boost::dynamic_pointer_cast<
                         OpenSoT::constraints::velocity::VelocityLimits>(
@@ -197,7 +199,7 @@ TEST_F(testVelocityAllocation, testConstructorAutoStack)
         const double minimum_velocity = 0.1;
         const double maximum_velocity = 0.3;
 
-        OpenSoT::Solver<yarp::sig::Matrix, yarp::sig::Vector>::Stack stack = autoStack->getStack();
+        OpenSoT::Solver<Eigen::MatrixXd, Eigen::VectorXd>::Stack stack = autoStack->getStack();
 
         OpenSoT::VelocityAllocation(stack,
                                     3e-3,
@@ -207,15 +209,17 @@ TEST_F(testVelocityAllocation, testConstructorAutoStack)
 
 
         unsigned int i = 0;
-        for(OpenSoT::Task<yarp::sig::Matrix, yarp::sig::Vector>::TaskPtr task :
-            stack)
+        typedef std::vector<OpenSoT::Task<Eigen::MatrixXd, Eigen::VectorXd>::TaskPtr >::iterator it_t;
+        for(it_t task = stack.begin();
+            task != stack.end();
+            ++task)
         {
-            ASSERT_EQ(task->getConstraints().size(),1) << "Task "
-                                                       << task->getTaskID()
+            ASSERT_EQ((*task)->getConstraints().size(),1) << "Task "
+                                                       << (*task)->getTaskID()
                                                        << " should have 1 constraint";
             EXPECT_DOUBLE_EQ(boost::dynamic_pointer_cast<
                 OpenSoT::constraints::velocity::VelocityLimits>(
-                    task->getConstraints().front()
+                    (*task)->getConstraints().front()
                         )->getVelocityLimits(),
                 minimum_velocity+i*(maximum_velocity - minimum_velocity)/(stack.size()-1));
 
@@ -226,7 +230,7 @@ TEST_F(testVelocityAllocation, testConstructorAutoStack)
     // testing constructor applies velocity bounds correctly velocity bounds exist on tasks,
     // and no velocity bounds exist on stack
     {
-        OpenSoT::DefaultHumanoidStack DHS(_robot, 3e-3, _robot.zeros);
+        OpenSoT::DefaultHumanoidStack DHS(_robot, 3e-3, cartesian_utils::toEigen(_robot.zeros));
 
         OpenSoT::AutoStack::Ptr autoStack =
             (DHS.leftArm + DHS.rightArm)
@@ -237,12 +241,12 @@ TEST_F(testVelocityAllocation, testConstructorAutoStack)
 
         const double high_velocity = 0.8;
 
-        DHS.postural->getConstraints().push_back(OpenSoT::Constraint<yarp::sig::Matrix, yarp::sig::Vector>::ConstraintPtr(
+        DHS.postural->getConstraints().push_back(OpenSoT::Constraint<Eigen::MatrixXd, Eigen::VectorXd>::ConstraintPtr(
             new OpenSoT::constraints::velocity::VelocityLimits(high_velocity,
                                                                3e-3,
                                                                DHS.postural->getXSize())));
 
-        OpenSoT::Solver<yarp::sig::Matrix, yarp::sig::Vector>::Stack stack = autoStack->getStack();
+        OpenSoT::Solver<Eigen::MatrixXd, Eigen::VectorXd>::Stack stack = autoStack->getStack();
         ASSERT_EQ(autoStack->getStack()[3]->getConstraints().size(),1);
         ASSERT_TRUE((bool)boost::dynamic_pointer_cast<
                         OpenSoT::constraints::velocity::VelocityLimits>(
@@ -272,7 +276,7 @@ TEST_F(testVelocityAllocation, testConstructorAutoStack)
     // testing constructor applies velocity bounds correctly when no velocity bounds exist on tasks,
     // and velocity bounds exist on stack
     {
-        OpenSoT::DefaultHumanoidStack DHS(_robot, 3e-3, _robot.zeros);
+        OpenSoT::DefaultHumanoidStack DHS(_robot, 3e-3, cartesian_utils::toEigen(_robot.zeros));
 
         OpenSoT::AutoStack::Ptr autoStack =
             (DHS.leftArm + DHS.rightArm)

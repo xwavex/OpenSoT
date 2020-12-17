@@ -20,9 +20,10 @@
 
  #include <OpenSoT/Constraint.h>
  #include <OpenSoT/tasks/velocity/CoM.h>
- #include <yarp/sig/all.h>
- #include <idynutils/idynutils.h>
  #include <kdl/frames.hpp>
+ #include <Eigen/Dense>
+ #include <XBotInterface/ModelInterface.h>
+ #include <OpenSoT/utils/convex_hull_utils.h>
 
 #define BOUND_SCALING 0.01
 
@@ -39,26 +40,27 @@
              * \f$A_{\text{CH}}J_{\text{CoM}}\dot{q} \leq b_{\text{CH}}\f$, where every row in
              * \f$\left[ A_{\text{CH}} , -b_{\text{CH}}\right]\f$
             */
-            class ConvexHull: public Constraint<yarp::sig::Matrix, yarp::sig::Vector> {
+            class ConvexHull: public Constraint<Eigen::MatrixXd, Eigen::VectorXd> {
             public:
                 typedef boost::shared_ptr<ConvexHull> Ptr;
             private:
-                iDynUtils &_robot;
+                XBot::ModelInterface &_robot;
                 double _boundScaling;
-                boost::shared_ptr<idynutils::convex_hull> _convex_hull;
+                boost::shared_ptr<convex_hull> _convex_hull;
                 std::vector<KDL::Vector> _ch;
+                std::list<std::string> _links_in_contact;
+
             public:
                 /**
                  * @brief ConvexHull constructor
                  * @param x the robot configuration vector
                  * @param robot the robot model, with floating base link set on the support foot
-                 * @param boundScaling the margin, in percentage, of the bounds margins
+                 * @param safetyMargin the margin, in [m], of the bounds margins
                  */
-                ConvexHull( const yarp::sig::Vector& x,
-                            iDynUtils& robot,
-                            const double boundScaling = BOUND_SCALING);
-
-                void update(const yarp::sig::Vector &x);
+                ConvexHull( const Eigen::VectorXd& x,
+                            XBot::ModelInterface& robot,
+                            const std::list<std::string>& links_in_contact,
+                            const double safetyMargin = BOUND_SCALING);
 
                 /**
                  * @brief getConstraints returns A and b such that \f$A*\delta q < b\f$ implies staying in the convex hull
@@ -67,7 +69,7 @@
                  * @param b the vector of coefficients
                  */
                 static void getConstraints(const std::vector<KDL::Vector> &points,
-                                            yarp::sig::Matrix& A, yarp::sig::Vector& b,
+                                            Eigen::MatrixXd& A, Eigen::VectorXd& b,
                                             const double boundScaling = BOUND_SCALING);
 
                 /**
@@ -82,6 +84,24 @@
                                                 double &a, double& b, double &c);
 
                 bool getConvexHull(std::vector<KDL::Vector>& ch);
+
+                /**
+                 * @brief setSafetyMargin sets a safety margin in [m] for the convex hull
+                 * @param sagetyMargin
+                 */
+                void setSafetyMargin(const double safetyMargin);
+
+                void update(const Eigen::VectorXd &x);
+
+                std::list<std::string> getLinksInContact()
+                {
+                    return _links_in_contact;
+                }
+
+                void setLinksInContact(const std::list<std::string>& links_inc_contact)
+                {
+                    _links_in_contact = links_inc_contact;
+                }
             };
         }
     }

@@ -1,13 +1,12 @@
 #include <gtest/gtest.h>
 #include <OpenSoT/constraints/velocity/JointLimits.h>
-#include <idynutils/idynutils.h>
-#include <yarp/sig/Vector.h>
-#include <yarp/math/Math.h>
+#include <XBotInterface/ModelInterface.h>
 #include <cmath>
 #define  s 1.0
 
-using namespace OpenSoT::constraints::velocity;
-using namespace yarp::math;
+std::string robotology_root = std::getenv("ROBOTOLOGY_ROOT");
+std::string relative_path = "/external/OpenSoT/tests/configs/coman/configs/config_coman_RBDL.yaml";
+std::string _path_to_cfg = robotology_root + relative_path;
 
 namespace {
 
@@ -18,20 +17,22 @@ class testJointLimits : public ::testing::Test {
   // You can remove any or all of the following functions if its body
   // is empty.
 
-  testJointLimits()  :
-      coman("coman",
-            std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.urdf",
-            std::string(OPENSOT_TESTS_ROBOTS_DIR)+"coman/coman.srdf")
+  testJointLimits()
   {
+
+      _model_ptr = XBot::ModelInterface::getModel(_path_to_cfg);
+
+      if(_model_ptr)
+          std::cout<<"pointer address: "<<_model_ptr.get()<<std::endl;
+      else
+          std::cout<<"pointer is NULL "<<_model_ptr.get()<<std::endl;
     // You can do set-up work for each test here.
 
-      qLowerBounds = coman.iDyn3_model.getJointBoundMin();
-      qUpperBounds = coman.iDyn3_model.getJointBoundMax();
-      zeros.resize(coman.iDyn3_model.getNrOfDOFs(),0.0);
+      _model_ptr->getJointLimits(qLowerBounds, qUpperBounds);
+      zeros.setZero(_model_ptr->getJointNum());
 
-      jointLimits = new JointLimits(zeros,
-                                    qUpperBounds,
-                                    qLowerBounds);
+      jointLimits = new OpenSoT::constraints::velocity::JointLimits(zeros,
+                                    qUpperBounds, qLowerBounds);
   }
 
   virtual ~testJointLimits() {
@@ -48,7 +49,8 @@ class testJointLimits : public ::testing::Test {
   virtual void SetUp() {
     // Code here will be called immediately after the constructor (right
     // before each test).
-      coman.updateiDyn3Model(zeros);
+      _model_ptr->setJointPosition(zeros);
+      _model_ptr->update();
       jointLimits->update(zeros);
   }
 
@@ -59,20 +61,20 @@ class testJointLimits : public ::testing::Test {
 
   // Objects declared here can be used by all tests in the test case for JointLimits.
 
-  iDynUtils coman;
-  JointLimits* jointLimits;
+  XBot::ModelInterface::Ptr _model_ptr;
+  OpenSoT::constraints::velocity::JointLimits* jointLimits;
 
-  yarp::sig::Vector qLowerBounds;
-  yarp::sig::Vector qUpperBounds;
-  yarp::sig::Vector zeros;
-  yarp::sig::Vector q;
+  Eigen::VectorXd qLowerBounds;
+  Eigen::VectorXd qUpperBounds;
+  Eigen::VectorXd zeros;
+  Eigen::VectorXd q;
 };
 
 TEST_F(testJointLimits, sizesAreCorrect) {
-    unsigned int x_size = coman.iDyn3_model.getNrOfDOFs();
+    unsigned int x_size = _model_ptr->getJointNum();
 
-    yarp::sig::Vector lowerBound = jointLimits->getLowerBound();
-    yarp::sig::Vector upperBound = jointLimits->getUpperBound();
+    Eigen::VectorXd lowerBound = jointLimits->getLowerBound();
+    Eigen::VectorXd upperBound = jointLimits->getUpperBound();
 
     EXPECT_EQ(x_size, lowerBound.size()) << "lowerBound should have size"
                                          << x_size;
@@ -103,7 +105,7 @@ TEST_F(testJointLimits, sizesAreCorrect) {
 // Tests that the Foo::getLowerBounds() are zero at the bounds
 TEST_F(testJointLimits, BoundsAreCorrect) {
 
-    yarp::sig::Vector q = zeros;
+    Eigen::VectorXd q = zeros;
     q[16] = qLowerBounds[16] - 1E-1;
     q[17] = qLowerBounds[17];
     q[19] = qUpperBounds[19];
@@ -113,10 +115,11 @@ TEST_F(testJointLimits, BoundsAreCorrect) {
     q[23] = (qUpperBounds[22] + qLowerBounds[22])/2 - 1E-1;
     q[24] = (qUpperBounds[22] + qLowerBounds[22])/2 + 1E-1;
 
-    coman.updateiDyn3Model(q);
+    _model_ptr->setJointPosition(q);
+    _model_ptr->update();
     jointLimits->update(q);
-    yarp::sig::Vector lowerBound = jointLimits->getLowerBound();
-    yarp::sig::Vector upperBound = jointLimits->getUpperBound();
+    Eigen::VectorXd lowerBound = jointLimits->getLowerBound();
+    Eigen::VectorXd upperBound = jointLimits->getUpperBound();
 
     /* checking a joint outside bounds
     EXPECT_DOUBLE_EQ(0.0, lowerBound[16]) << "Joint 16 below lower bound " << q[16] << std::endl
@@ -169,20 +172,95 @@ TEST_F(testJointLimits, BoundsAreCorrect) {
 }
 
 TEST_F(testJointLimits, boundsDoUpdate) {
-    yarp::sig::Vector q(zeros);
-    yarp::sig::Vector q_next(zeros.size(), 0.1);
+    Eigen::VectorXd q(zeros.size()); q.setZero(q.size());
+    Eigen::VectorXd q_next = Eigen::VectorXd::Constant(q.size(), 0.1);
 
     jointLimits->update(q);
-    yarp::sig::Vector oldLowerBound = jointLimits->getLowerBound();
-    yarp::sig::Vector oldUpperBound = jointLimits->getUpperBound();
+    Eigen::VectorXd oldLowerBound = jointLimits->getLowerBound();
+    Eigen::VectorXd oldUpperBound = jointLimits->getUpperBound();
 
     jointLimits->update(q_next);
 
-    yarp::sig::Vector newLowerBound = jointLimits->getLowerBound();
-    yarp::sig::Vector newUpperBound = jointLimits->getUpperBound();
+    Eigen::VectorXd newLowerBound = jointLimits->getLowerBound();
+    Eigen::VectorXd newUpperBound = jointLimits->getUpperBound();
 
     EXPECT_FALSE(oldLowerBound == newLowerBound);
     EXPECT_FALSE(oldUpperBound == newUpperBound);
+}
+
+TEST_F(testJointLimits, startingOutsideBoundsPositive)
+{
+    //Bounds between -1 and 1
+    Eigen::VectorXd q_min(10);
+    q_min = -Eigen::VectorXd::Ones(q_min.size());
+    Eigen::VectorXd q_max = -q_min;
+
+    //q all zero but q[5] = 2
+    Eigen::VectorXd q(q_min.size());
+    q.setZero(q.size());
+    q[5] = 2;
+
+    OpenSoT::constraints::velocity::JointLimits joint_lims(q, q_max, q_min);
+    joint_lims.update(q);
+
+    Eigen::VectorXd lb = joint_lims.getLowerBound();
+    for(unsigned int i = 0; i < q.size(); ++i)
+        EXPECT_DOUBLE_EQ(lb[i], q_min[i] - q[i]);
+
+    Eigen::VectorXd ub = joint_lims.getUpperBound();
+    for(unsigned int i = 0; i < q.size(); ++i){
+        if(i == 5)
+            EXPECT_DOUBLE_EQ(ub[i], 0.0);
+        else
+            EXPECT_DOUBLE_EQ(ub[i], q_max[i] - q[i]);
+    }
+
+    q[5] = 0;
+    joint_lims.update(q);
+    lb = joint_lims.getLowerBound();
+    for(unsigned int i = 0; i < q.size(); ++i)
+        EXPECT_DOUBLE_EQ(lb[i], q_min[i] - q[i]);
+
+    ub = joint_lims.getUpperBound();
+    for(unsigned int i = 0; i < q.size(); ++i)
+        EXPECT_DOUBLE_EQ(ub[i], q_max[i] - q[i]);
+}
+
+TEST_F(testJointLimits, startingOutsideBoundsNegative)
+{
+    //Bounds between -1 and 1
+    Eigen::VectorXd q_min(10);
+    q_min = -Eigen::VectorXd::Ones(q_min.size());
+    Eigen::VectorXd q_max = -q_min;
+
+    //q all zero but q[5] = -2
+    Eigen::VectorXd q(q_min.size());
+    q.setZero(q.size());
+    q[5] = -2;
+
+    OpenSoT::constraints::velocity::JointLimits joint_lims(q, q_max, q_min);
+    joint_lims.update(q);
+
+    Eigen::VectorXd lb = joint_lims.getLowerBound();
+    for(unsigned int i = 0; i < q.size(); ++i){
+        if(i == 5)
+            EXPECT_DOUBLE_EQ(lb[i], 0.0);
+        else
+            EXPECT_DOUBLE_EQ(lb[i], q_min[i] - q[i]);}
+
+    Eigen::VectorXd ub = joint_lims.getUpperBound();
+    for(unsigned int i = 0; i < q.size(); ++i)
+        EXPECT_DOUBLE_EQ(ub[i], q_max[i] - q[i]);
+
+    q[5] = 0;
+    joint_lims.update(q);
+    lb = joint_lims.getLowerBound();
+    for(unsigned int i = 0; i < q.size(); ++i)
+        EXPECT_DOUBLE_EQ(lb[i], q_min[i] - q[i]);
+
+    ub = joint_lims.getUpperBound();
+    for(unsigned int i = 0; i < q.size(); ++i)
+        EXPECT_DOUBLE_EQ(ub[i], q_max[i] - q[i]);
 }
 
 }  // namespace

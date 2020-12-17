@@ -16,23 +16,21 @@
 */
 
 #include <OpenSoT/tasks/velocity/Postural.h>
-#include <yarp/math/Math.h>
-#include <idynutils/cartesian_utils.h>
 #include <exception>
 #include <cmath>
 
+
 using namespace OpenSoT::tasks::velocity;
-using namespace yarp::math;
 
-Postural::Postural(   const yarp::sig::Vector& x) :
+Postural::Postural(   const Eigen::VectorXd& x) :
     Task("Postural", x.size()), _x(x),
-    _x_desired(x.size(),0.0), _xdot_desired(x.size(),0.0)
+    _x_desired(x.size()), _xdot_desired(x.size())
 {
-    _W.resize(_x_size, _x_size);
-    _W.eye();
+    _x_desired.setZero(_x_size);
+    _xdot_desired.setZero(_x_size);
 
-    _A.resize(_x_size, _x_size);
-    _A.eye();
+    _W.setIdentity(_x_size, _x_size);
+    _A.setIdentity(_x_size, _x_size);
 
     _hessianType = HST_IDENTITY;
 
@@ -45,60 +43,70 @@ Postural::~Postural()
 {
 }
 
-void Postural::_update(const yarp::sig::Vector &x) {
+void Postural::_update(const Eigen::VectorXd &x) {
     _x = x;
 
     /************************* COMPUTING TASK *****************************/
 
     this->update_b();
 
-    _xdot_desired.zero();
+    _xdot_desired.setZero(_x_size);
 
     /**********************************************************************/
 }
 
-void Postural::setReference(const yarp::sig::Vector& x_desired) {
-    assert(x_desired.size() == _x_size);
-
-    _x_desired = x_desired;
-    _xdot_desired.zero();
-    this->update_b();
+void Postural::setReference(const Eigen::VectorXd& x_desired) {
+    if(x_desired.size() == _x_size)
+    {
+        _x_desired = x_desired;
+        _xdot_desired.setZero(_x_size);
+        this->update_b();
+    }
 }
 
-void OpenSoT::tasks::velocity::Postural::setReference(const yarp::sig::Vector &x_desired,
-                                                      const yarp::sig::Vector &xdot_desired)
+void OpenSoT::tasks::velocity::Postural::setReference(const Eigen::VectorXd &x_desired,
+                                                      const Eigen::VectorXd &xdot_desired)
 {
-    assert(x_desired.size() == _x_size);
-    assert(xdot_desired.size() == _x_size);
-
-    _x_desired = x_desired;
-    _xdot_desired = xdot_desired;
-    this->update_b();
+    if(x_desired.size() == _x_size && xdot_desired.size() == _x_size)
+    {
+        _x_desired = x_desired;
+        _xdot_desired = xdot_desired;
+        this->update_b();
+    }
 }
 
-yarp::sig::Vector OpenSoT::tasks::velocity::Postural::getReference() const
+Eigen::VectorXd OpenSoT::tasks::velocity::Postural::getReference() const
 {
     return _x_desired;
 }
 
-void OpenSoT::tasks::velocity::Postural::getReference(yarp::sig::Vector &x_desired,
-                                                      yarp::sig::Vector &xdot_desired) const
+void OpenSoT::tasks::velocity::Postural::getReference(Eigen::VectorXd &x_desired,
+                                                      Eigen::VectorXd &xdot_desired) const
 {
     x_desired = _x_desired;
     xdot_desired = _xdot_desired;
 }
 
 void Postural::update_b() {
-    if(_lambda < 1E-9)
-        _b = (_x_desired - _x);
-    else
-        _b = (_x_desired - _x) + _xdot_desired/_lambda;
+    _b = _xdot_desired + _lambda*(_x_desired - _x);
 }
 
 void OpenSoT::tasks::velocity::Postural::setLambda(double lambda)
 {
-    this->_lambda = lambda;
-    this->update_b();
+    if(lambda >= 0.0){
+        this->_lambda = lambda;
+        this->update_b();
+    }
+}
+
+Eigen::VectorXd Postural::getError()
+{
+    return _x_desired - _x;
+}
+
+Eigen::VectorXd OpenSoT::tasks::velocity::Postural::getActualPositions()
+{
+    return _x;
 }
 
 

@@ -20,10 +20,7 @@
 
  #include <OpenSoT/Constraint.h>
  #include <OpenSoT/tasks/velocity/Cartesian.h>
- #include <yarp/sig/all.h>
- #include <idynutils/idynutils.h>
- #include <idynutils/convex_hull.h>
- #include <kdl/frames.hpp>
+ #include <OpenSoT/tasks/velocity/CoM.h>
 
 #define BOUND_SCALING 0.01
 
@@ -44,14 +41,18 @@
              * NOTICE It is adviced to apply this constraint only to \emph{Cartesian} tasks that are
              * expressed in the \emph{world} frame of reference, to avoid unexpected behaviors.
              */
-            class CartesianPositionConstraint: public Constraint<yarp::sig::Matrix, yarp::sig::Vector> {
+            class CartesianPositionConstraint: public Constraint<Eigen::MatrixXd, Eigen::VectorXd> {
             public:
                 typedef boost::shared_ptr<CartesianPositionConstraint> Ptr;
             private:
                 OpenSoT::tasks::velocity::Cartesian::Ptr _cartesianTask;
-                yarp::sig::Matrix _A_Cartesian;
-                yarp::sig::Vector _b_Cartesian;
+                OpenSoT::tasks::velocity::CoM::Ptr _comTask;
+                Eigen::MatrixXd _A_Cartesian;
+                Eigen::VectorXd _b_Cartesian;
                 double _boundScaling;
+                bool _is_Cartesian;
+                Eigen::MatrixXd J;
+                Eigen::VectorXd currentPosition;
 
             public:
                 /**
@@ -63,13 +64,33 @@
                  * @param boundScaling a parameter which is inversely proportional to the number of steps
                  * needed to reach the cartesian task limits.
                  */
-                CartesianPositionConstraint(const yarp::sig::Vector& x,
+                CartesianPositionConstraint(const Eigen::VectorXd& x,
                                              OpenSoT::tasks::velocity::Cartesian::Ptr cartesianTask,
-                                             const yarp::sig::Matrix& A_Cartesian,
-                                             const yarp::sig::Vector& b_Cartesian,
+                                             const Eigen::MatrixXd& A_Cartesian,
+                                             const Eigen::VectorXd& b_Cartesian,
                                             const double boundScaling = 1.0);
 
-                void update(const yarp::sig::Vector &x);
+                CartesianPositionConstraint(const Eigen::VectorXd& x,
+                                             OpenSoT::tasks::velocity::CoM::Ptr comTask,
+                                             const Eigen::MatrixXd& A_Cartesian,
+                                             const Eigen::VectorXd& b_Cartesian,
+                                            const double boundScaling = 1.0);
+
+                void update(const Eigen::VectorXd &x);
+
+                /**
+                 * @brief getCurrentPosition return the current Cartesian position of the bounded Task
+                 * @param current_position a 3x1 position vector
+                 */
+                void getCurrentPosition(Eigen::VectorXd& current_position);
+
+                /**
+                 * @brief setAbCartesian update with new A_Cartesian and b_Cartesian
+                 * @param A_Cartesian new matrix nx3 specifying the cartesian limits
+                 * @param b_Cartesian new vector of size n specifying the cartesian limits
+                 */
+                void setAbCartesian(const Eigen::MatrixXd& A_Cartesian, const Eigen::VectorXd& b_Cartesian);
+
             };
         }
     }
